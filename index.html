@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>SRL Oversight — Head Office &amp; Cluster</title>
+<title>SRL — Head Office and Regional Oversight</title>
 <style>
 :root{
   --ink:#10203A; --ink-soft:#4A5A72; --ink-faint:#8494A8;
@@ -345,7 +345,7 @@ const CONFIG = {
   PICKUP_SEQUENCE: ["First pick-up of the day", "Second pick-up of the day"],
 
   /* Day-end performance criteria. Edit freely — the form, sheet and export follow.
-     Scored 1 to 5. A score of 1 or 2 forces a written remark. */
+     Scored with four words — Poor / Fair / Good / Excellent. Poor or Fair forces a written remark. */
   PERFORMANCE_CRITERIA: {
     wager: ["Grooming", "Floor presence", "Time keeping", "Customer interaction", "Instruction follow-up"],
     guard: ["Grooming", "Time keeping", "Activeness on duty", "Post discipline", "Customer courtesy"]
@@ -355,8 +355,6 @@ const CONFIG = {
      Add or rename here and the form, sheet and export follow. */
   BUDGET_CATEGORIES: [
     { key:"food",            label:"Food" },
-    { key:"wagersRetail",    label:"Daily wagers — Retail" },
-    { key:"wagersFragrance", label:"Daily wagers — Fragrance" },
     { key:"janitorial",      label:"Extra janitorial" },
     { key:"tentage",         label:"Tentage and chairs" },
     { key:"valet",           label:"Valet parking" },
@@ -382,11 +380,14 @@ const CONFIG = {
 <!-- ==================== GATE ==================== -->
 <div id="gate" class="gate">
   <div class="gate-card">
-    <div style="display:inline-flex;align-items:center;gap:7px;background:#1F2937;color:#fff;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;padding:5px 12px;border-radius:20px;margin-bottom:12px">🛡 Head office &amp; cluster oversight</div>
+    <div style="display:inline-flex;align-items:center;gap:7px;background:#1F2937;color:#fff;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;padding:5px 12px;border-radius:20px;margin-bottom:12px">🛡 Head Office and Regional Oversight</div>
     <h2>Oversight dashboard</h2>
-    <p>Restricted — for <b>cluster managers and head office only</b>. All-store cash, attendance and compliance reporting. Store teams: this is not your site — use the store entry link.</p>
+    <p>Restricted — for <b>Head Office and senior management only</b>. All-store compliance and task execution reporting. Store teams: this is not your site — use the store entry link.</p>
     <label for="gateCode">Access code</label>
-    <input type="text" id="gateCode" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Your oversight access code">
+    <div style="position:relative">
+      <input type="password" id="gateCode" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Your oversight access code" style="padding-right:46px;width:100%;box-sizing:border-box">
+      <button type="button" id="gateEye" aria-label="Show code" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:#6b7280">👁</button>
+    </div>
     <div style="height:14px"></div>
     <button class="btn btn-block" id="gateBtn">Continue</button>
     <div id="gateMsg"></div>
@@ -413,7 +414,7 @@ const CONFIG = {
 </style>
 <div id="menu" class="hidden">
   <div class="mast"><div class="wrap">
-    <p class="mast-title">🛡 Oversight · head office &amp; cluster</p>
+    <p class="mast-title">🛡 Head Office and Regional Oversight</p>
     <p class="mast-sub" id="menuStore"></p>
   </div></div>
   <div class="wrap">
@@ -1139,10 +1140,17 @@ function supSave(){
 }
 
 let STORE = null;
-let RAW = { till:[], pick:[], day:[], fake:[], bank:[], bankPeople:[], shift:[], shiftPeople:[], budget:[], performance:[] };
+/* legacy RAW loader removed — the OVS adapter is the single data path */
 
 /* ================= gate ================= */
 $("gateBtn").onclick = openGate;
+  $("gateEye").onclick = () => {
+    const f=$("gateCode"), show=f.type==="password";
+    f.type = show ? "text" : "password";
+    $("gateEye").textContent = show ? "🙈" : "👁";
+    f.focus();
+  };
+
 $("gateCode").addEventListener("keydown", e => { if(e.key==="Enter") openGate(); });
 
 let ACCESS_CODE = "";
@@ -1157,9 +1165,11 @@ async function openGate(){
       body:JSON.stringify({action:"auth",code:v})});
     const o = await res.json();
     if(!o.ok){ note($("gateMsg"),o.error||"That code is not recognised.","bad"); return; }
-    if(o.role==="store"){ note($("gateMsg"),"That is a store code. This site is for head office and cluster managers — stores use the store entry site.","bad"); return; }
+    if(o.role==="store"){ note($("gateMsg"),"That is a store code. This site is for head office, regional / cluster managers and departments — stores use the store entry site.","bad"); return; }
     ACCESS_CODE = v;
     if(o.role==="cluster") startCluster(o.mgr);
+    else if(o.role==="regional") ovStart("regional", o.rm, o.actMgr||"");
+    else if(o.role==="dept") ovStart("dept", o.deptLabel||"", "", o.dept);
     else startReview();
   }catch(e){ note($("gateMsg"),"No connection. Check the internet and try again.","bad"); }
 }
@@ -3141,166 +3151,32 @@ async function send(btn, msgEl, body, onOk){
   btn.disabled = false; btn.textContent = label;
 }
 
-/* ================= CLUSTER MANAGER =================
-   CP1: region store-list, pending-approval queue (approve/reject), and a
-   MANDATORY sign-off that is blocked while any approval is pending or a flag
-   is open. Signing off locks the day; it can be reopened. Preview uses mock
-   data; the live wiring to Code.gs is the CP3 step. */
-var CL = {
-  region:"Central", dayLabel:"Day 2 — 30 Aug",
-  stores:[
-    {code:"EMP",name:"Emporium Mall, Lahore",   summary:"7 tasks filed · 1 change waiting"},
-    {code:"PKG",name:"Packages Mall, Lahore",   summary:"All 7 tasks filed",  base:"signed",  signedAt:"21:50"},
-    {code:"AMN",name:"Amanah Mall, Lahore",     summary:"All 7 tasks filed",  base:"ready"},
-    {code:"GRW",name:"Gujranwala Rahwali",      summary:"Till 2 change waiting", base:"pending", pendingN:1},
-    {code:"AVP",name:"Avenue Plaza, Bahawalpur",summary:"6 of 7 tasks filed", base:"flagged", flagText:"Bank deposit variance PKR 4,500 unexplained"},
-    {code:"CRS",name:"College Road, Sahiwal",   summary:"Nothing filed yet",  base:"notsub"},
-  ],
-  pending:[ {pid:1, store:"EMP", module:"Day-end till variance", who:"Till 2 · Sana Malik",
-             from:"Short PKR 1,200", to:"Balanced PKR 0",
-             reason:"Drawer recounted with the manager — original count was one bundle out", ts:"21:44"},
-            {pid:2, store:"GRW", module:"Bank deposit (day variance)", who:"Day variance",
-             from:"PKR 4,500 short", to:"PKR 0",
-             reason:"Found the missing deposit slip, re-entered the amount", ts:"09:15"} ],
-  signed:{ PKG:{by:"Cluster Manager",at:"21:50"} }, rejected:{}, open:null, cpid:3
-};
-const CL_LABEL={ signed:"Signed off", ready:"Ready for review", pending:"Approvals pending", flagged:"Flag", notsub:"Not submitted" };
-function clStore(code){ return CL.stores.find(s=>s.code===code); }
-function clStatus(code){
-  if(CL.signed[code]) return "signed";
-  if(CL.pending.some(p=>p.store===code)) return "pending";
-  const s=clStore(code);
-  return (s.base && s.base!=="signed") ? s.base : "ready";
-}
-function clCount(code){ return CL.pending.filter(p=>p.store===code).length || (clStatus(code)==="pending" ? (clStore(code).pendingN||1) : 0); }
-
+let OVS=null, OVROLE="hq", OVREGION="", OVRM="", OVACT="", OVDEPT="", OVCONTAINER="revPane", OVOPEN=null, OVEXPAND={}, OVFILTER="all";
 function startCluster(mgr){ ovStart("cluster", mgr); }
-function clRender(){
-  if(CL.open){ $("clBody").innerHTML = clDetail(CL.open); return; }
-  var signed=0, review=0, flags=0, approvals=0;
-  CL.stores.forEach(s=>{ const st=clStatus(s.code);
-    if(st==="signed") signed++;
-    if(st==="ready"||st==="pending"||st==="flagged") review++;
-    if(st==="flagged") flags++;
-    if(st==="pending") approvals+=clCount(s.code);
-  });
-  const strip='<div class="cl-strip">'
-    +'<div class="cl-stat '+(signed?"good":"")+'"><b>'+signed+'</b><span>Signed off</span></div>'
-    +'<div class="cl-stat '+(review?"hot":"")+'"><b>'+review+'</b><span>Awaiting review</span></div>'
-    +'<div class="cl-stat '+(approvals?"hot":"")+'"><b>'+approvals+'</b><span>Approvals waiting</span></div>'
-    +'<div class="cl-stat '+(flags?"bad":"")+'"><b>'+flags+'</b><span>Flags open</span></div></div>';
-  const rows=CL.stores.map(s=>{ const st=clStatus(s.code), lab=CL_LABEL[st];
-    const extra = st==="signed" ? " · "+(CL.signed[s.code]?CL.signed[s.code].at:s.signedAt)
-                : st==="pending" ? " · "+clCount(s.code)+" waiting" : "";
-    return '<div class="cl-srow" onclick="clOpen(\''+s.code+'\')"><div class="cl-name">'+esc(s.name)
-      +'<small>'+esc(s.summary||"")+'</small></div><span class="cl-chip '+st+'">'+lab+extra+'</span></div>';
-  }).join("");
-  $("clBody").innerHTML='<p class="meta" style="margin:0 0 10px"><button class="cl-back" onclick="clExit()">‹ Sign out of cluster</button></p>'
-    +strip+'<div class="card"><div class="card-head"><h3>'+CL.region+' region · '+CL.stores.length+' stores</h3><span class="hint">'+CL.dayLabel+'</span></div>'+rows+'</div>';
-}
-function clExit(){ location.reload(); }
-function clOpen(code){ CL.open=code; clRender(); window.scrollTo(0,0); }
-function clBack(){ CL.open=null; clRender(); }
-function clDetail(code){
-  const s=clStore(code), st=clStatus(code);
-  let html='<button class="cl-back" onclick="clBack()">‹ Back to region</button>'
-    +'<div class="card"><div class="card-head"><h3>'+esc(s.name)+'</h3><span class="cl-chip '+st+'">'+CL_LABEL[st]+'</span></div>'
-    +'<div class="card-body"><span class="meta">'+esc(s.summary||"")+'</span></div></div>';
-  // pending approvals for this store
-  const mine=CL.pending.filter(p=>p.store===code);
-  if(mine.length){
-    html+='<div class="card"><div class="card-head"><h3>Needs your approval</h3><span class="hint">'+mine.length+' waiting</span></div><div class="card-body">'
-      +mine.map(p=>'<div class="cl-q"><div class="cl-who">'+esc(p.module)+' — '+esc(p.who)+'<small>requested '+esc(p.ts)+'</small></div>'
-        +'<div class="cl-diff"><span class="cl-old">'+esc(p.from)+'</span><span class="cl-arw">→</span><span class="cl-new">'+esc(p.to)+'</span></div>'
-        +'<div class="cl-reason"><b>Store\'s reason:</b> '+esc(p.reason)+'</div>'
-        +'<div class="cl-acts"><button class="btn btn-ok" onclick="clApprove('+p.pid+')">Approve</button>'
-        +'<button class="btn btn-red" onclick="clShowRej('+p.pid+')">Not approved</button></div>'
-        +'<div class="cl-rej" data-pid="'+p.pid+'"><label class="meta">Reason to send back to the store</label>'
-        +'<textarea id="clRej'+p.pid+'" placeholder="e.g. Attach the recount sheet before I can approve this."></textarea>'
-        +'<div class="cl-acts"><button class="btn btn-red" onclick="clReject('+p.pid+')">Send back, not approved</button>'
-        +'<button class="btn btn-line" onclick="clHideRej('+p.pid+')">Cancel</button></div></div></div>').join("")
-      +'</div></div>';
-  } else if(st==="flagged"){
-    html+='<div class="card"><div class="card-body"><div class="cl-blk">⚑ '+esc(s.flagText||"A reconciliation flag is open.")+'</div></div></div>';
-  }
-  // sign-off card
-  html+=clSignCard(s,st);
-  return html;
-}
-function clSignCard(s,st){
-  if(st==="signed"){
-    const info=CL.signed[s.code]||{by:"Cluster Manager",at:s.signedAt};
-    return '<div class="card"><div class="card-body"><div class="cl-signed">✓ <b>Signed off</b> by '+esc(info.by)+' at '+esc(info.at)
-      +'. Day closed &amp; locked.</div><div class="cl-acts"><button class="btn btn-line" onclick="clReopen(\''+s.code+'\')">Reopen day</button></div></div></div>';
-  }
-  let blk="";
-  if(st==="pending") blk=clCount(s.code)+" approval"+(clCount(s.code)>1?"s":"")+" still pending — clear them before signing off.";
-  else if(st==="flagged") blk="A reconciliation flag is open — address it before signing off.";
-  else if(st==="notsub") blk="This store has not submitted the day yet — nothing to sign off.";
-  const can=!blk;
-  return '<div class="card"><div class="card-head"><h3>Cluster sign-off</h3><span class="hint">Mandatory to close the day</span></div><div class="card-body">'
-    +(blk?'<div class="cl-blk">🚫 '+esc(blk)+'</div>':'')
-    +'<label class="cl-lock"><input type="checkbox" id="clAck" '+(can?'':'disabled')+' onchange="clWire()"><span>I have reviewed '
-    +esc(s.name.split(",")[0])+'\'s '+CL.dayLabel+' and confirm the cash figures are correct.</span></label>'
-    +'<button class="btn" id="clSignBtn" '+(can?'':'disabled')+' onclick="clSignoff(\''+s.code+'\')" style="width:100%">Sign off &amp; lock day</button></div></div>';
-}
-function clWire(){ const a=$("clAck"), b=$("clSignBtn"); if(a&&b) b.disabled=!(a.checked&&!a.disabled); }
-function clShowRej(pid){ const el=document.querySelector('.cl-rej[data-pid="'+pid+'"]'); if(el){ el.classList.add("show"); const t=$("clRej"+pid); if(t) t.focus(); } }
-function clHideRej(pid){ const el=document.querySelector('.cl-rej[data-pid="'+pid+'"]'); if(el) el.classList.remove("show"); }
-function clApprove(pid){
-  const i=CL.pending.findIndex(p=>p.pid===pid); if(i<0) return;
-  const p=CL.pending[i]; CL.pending.splice(i,1);
-  toast(p.who+" approved — now official."); clRender();
-}
-function clReject(pid){
-  const i=CL.pending.findIndex(p=>p.pid===pid); if(i<0) return;
-  const remark=($("clRej"+pid)?$("clRej"+pid).value:"").trim();
-  if(!remark){ toast("Write a reason to send back."); const t=$("clRej"+pid); if(t) t.focus(); return; }
-  const p=CL.pending[i]; CL.pending.splice(i,1); CL.rejected[p.store]=remark;
-  toast("Sent back to the store — not approved."); clRender();
-}
-function clSignoff(code){
-  const a=$("clAck"); if(!a||!a.checked){ toast("Tick the box to confirm you reviewed the day."); return; }
-  const st=clStatus(code);
-  if(st==="pending"||st==="flagged"||st==="notsub"){ toast("Resolve the blocker first."); return; }
-  CL.signed[code]={ by:"Cluster Manager", at: (SERVER.time||"now") };
-  toast(clStore(code).name.split(",")[0]+" signed off — day closed."); clRender();
-}
-function clReopen(code){ delete CL.signed[code]; const s=clStore(code); if(s.base==="signed") s.base="ready";
-  toast("Day reopened — awaiting re-sign-off."); clRender(); }
-function toast(m){ /* lightweight, reuses note-less flash */ try{ let t=document.getElementById("clToast");
-  if(!t){ t=document.createElement("div"); t.id="clToast"; t.style.cssText="position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#1b1f27;color:#fff;padding:10px 16px;border-radius:9px;font-size:13px;z-index:60;max-width:90%;transition:opacity .25s"; document.body.appendChild(t); }
-  t.textContent=m; t.style.opacity="1"; clearTimeout(t._t); t._t=setTimeout(()=>{t.style.opacity="0";},2400);
-}catch(e){} }
-
-
-/* ============================================================================
-   OVERSIGHT ENGINE  ·  shared by Head Office (HQ) and Cluster Manager
-   - HQ (REVIEW code): sees every region, can act on any store.
-   - Cluster (CLUSTER code): sees its own region only, can act only on its stores.
-   - Both drill store -> day -> each module: freshness stamp + summary + exceptions,
-     tap to expand the full locked record. Sensitive: opens behind a code, read model
-     built from the same shapes the stores fill.
-   ============================================================================ */
-let OVS=null, OVROLE="hq", OVREGION="", OVCONTAINER="revPane", OVOPEN=null, OVEXPAND={}, OVFILTER="all";
-
-function serverNow(){ const d=SERVER.date||"2026-08-30"; let t=(SERVER.time||"12:00"); if(!/^\d{2}:\d{2}/.test(t)) t="12:00"; return new Date(d+"T"+t.slice(0,5)+":00"); }
-function tsAgo(hoursAgo){ const dt=new Date(serverNow().getTime()-hoursAgo*3600000); const q=x=>String(x).padStart(2,"0");
-  return dt.getFullYear()+"-"+q(dt.getMonth()+1)+"-"+q(dt.getDate())+" "+q(dt.getHours())+":"+q(dt.getMinutes()); }
+function serverNow(){ const n=new Date(); return n; }
 function freshness(at){ if(!at) return {txt:"not filed",stale:false,none:true};
   const dt=new Date(String(at).replace(" ","T")+":00"); const h=(serverNow()-dt)/3600000; const stale=h>24;
   let txt; if(h<1) txt=Math.max(1,Math.round(h*60))+"m ago"; else if(h<48) txt=Math.round(h)+"h ago"; else txt=Math.round(h/24)+"d ago";
   return {txt, stale, at:String(at)}; }
 function freshBadge(at){ const f=freshness(at); if(f.none) return '<span class="ov-fresh none">not filed</span>';
   return '<span class="ov-fresh'+(f.stale?" stale":"")+'">'+(f.stale?"⚠ ":"🕑 ")+esc(f.at.slice(11))+' · '+esc(f.txt)+(f.stale?" · stale":"")+'</span>'; }
-
 function ovCanAct(code){ const s=(OVS.stores||[]).find(x=>x.code===code); if(!s) return false;
-  return OVROLE==="hq" || s.region===OVREGION; }
+  if(OVROLE==="hq") return true;
+  if(OVROLE==="regional") return !!OVACT && s.region===OVACT;   /* review-only, except own cluster */
+  return s.region===OVREGION; }
+function toast(m){ try{ let t=document.getElementById("clToast");
+  if(!t){ t=document.createElement("div"); t.id="clToast";
+    t.style.cssText="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1b1f27;color:#fff;padding:11px 18px;border-radius:10px;font-size:13.5px;z-index:99;box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:90vw";
+    document.body.appendChild(t); }
+  t.textContent=m; t.style.display="block";
+  clearTimeout(t._h); t._h=setTimeout(function(){ t.style.display="none"; },3200);
+}catch(e){} }
 
 /* ============ PRODUCTION: build OVS from the server feed (?action=all) ============ */
 let OVPAYLOAD=null;
 async function ovFetch(){
-  const ev=(CONFIG.EVENTS[0]||{}).id||"EVENT-01";
+  const sel=$("revEv");
+  const ev=(sel&&sel.value)||(CONFIG.EVENTS[0]||{}).id||"EVENT-01";
   const res=await fetch(CONFIG.API_URL+"?action=all&code="+encodeURIComponent(ACCESS_CODE)+"&event="+encodeURIComponent(ev));
   return await res.json();
 }
@@ -3312,6 +3188,14 @@ const OV_INC_FIELDS={custName:"Customer",custContact:"Contact",items:"Item detai
  entryTime:"Store entry time",reportTime:"Report time",foundBy:"Who found it",handedTo:"Handed over to",
  summary:"Summary",where:"Where",involved:"Who was involved",outcome:"Outcome",from:"Out of service from",
  till:"Back on at",reportedHO:"Reported to head office?",details:"Details",person:"Person injured"};
+function hoursWorked(inT,outT){
+  const m=t=>{ if(!t) return null; const p=String(t).split(":"); return (+p[0])*60+(+p[1]); };
+  let a=m(inT), b=m(outT); if(a==null||b==null) return "";
+  if(b<a) b+=24*60;              /* overnight shift wraps past midnight */
+  const mins=b-a, h=Math.floor(mins/60), mm=mins%60;
+  return h+"h"+(mm?" "+String(mm)+"m":"");
+}
+function fmtMins(m){ if(!m) return "0h"; const h=Math.floor(m/60),mm=m%60; return h+"h"+(mm?" "+mm+"m":""); }
 function ovAmendSummary(module,d){
   if(!d) return "—";
   if(module==="dayend") return "Shortage "+pkr(d.declaredShortage||0)+" · excess "+pkr(d.declaredExcess||0);
@@ -3326,6 +3210,8 @@ function ovBuild(){
   /* current sale day from the server's business date */
   let day=1; const bd=p.businessDate||"";
   (ev.days||[]).forEach(d=>{ if(d.date<=bd) day=d.day; });
+  OVS.today=day;
+  if(OVDAYPICK && OVDAYPICK<=day) day=OVDAYPICK;   /* manager reviewing an earlier day */
   const dObj=(ev.days||[]).find(d=>String(d.day)===String(day))||{day:day,date:bd};
   OVS.day=day; OVS.dayLabel="Day "+day+" — "+(dObj.date||bd);
   /* point every report's day selector at the current sale day */
@@ -3348,7 +3234,11 @@ function ovBuild(){
       who:a.who||"", from:ovAmendSummary(a.module,a.from), to:ovAmendSummary(a.module,a.to), reason:a.reason||"", ts:a.at||"" });
   });
   const signed={};
-  (p.signoffs||[]).forEach(x=>{ if(String(x.day)===String(day)&&x.status==="signed") signed[x.store]={by:x.by,at:x.at}; });
+  (p.signoffs||[]).forEach(x=>{ if(String(x.day)===String(day)&&x.status==="signed") signed[x.store]={by:x.by,at:x.at,mods:x.modules||[]}; });
+  /* every day's sign-offs (for scorecard ratios + trend) */
+  OVS.signed5={};
+  (p.signoffs||[]).forEach(x=>{ if(x.status==="signed"){ (OVS.signed5[x.store]=OVS.signed5[x.store]||{})[String(x.day)]={by:x.by,at:x.at,mods:x.modules||[]}; } });
+  OVS.businessDate=bd;
 
   /* current-day per-store view */
   OVS.data={};
@@ -3368,17 +3258,25 @@ function ovBuild(){
   });
 
   /* 5-day structures (zero-filled where nothing filed) */
-  OVS.cash={}; OVS.picks5={}; OVS.deposit5={}; OVS.wager5={}; OVS.guard5={}; OVS.rating5={}; OVS.budget5={};
-  OVS.tillLines=[];
+  OVS.cash={}; OVS.picks5={}; OVS.deposit5={}; OVS.wager5={}; OVS.guard5={}; OVS.rating5={}; OVS.budget5={}; OVS.budCats={};
+  OVS.tillLines=[]; OVS.filed5={}; OVS.net5={}; OVS.prep5={}; OVS.postAll={};
   const today=bd;
   OVS.stores.forEach(st=>{
     OVS.cash[st.code]={}; OVS.picks5[st.code]={}; OVS.deposit5[st.code]={};
     OVS.wager5[st.code]={}; OVS.guard5[st.code]={}; OVS.rating5[st.code]={}; OVS.budget5[st.code]={};
+    OVS.filed5[st.code]={}; OVS.net5[st.code]={}; OVS.prep5[st.code]={};
     let cum=0, alloc=0;
     for(let dy=1;dy<=5;dy++){
       const rows=rowsOf(st.code,dy);
       const de=rows.dayend?rows.dayend.data:null;
       const dp=rows.deposit?rows.deposit.data:null;
+      /* which modules are filed this day (compliance engine) + net cash/card impact */
+      const filedK=[]; if((rows.picks||[]).length) filedK.push("picks");
+      ["shift_wager","shift_guard","dayend","deposit","budget","performance","support"].forEach(k=>{ if(rows[k]) filedK.push(k); });
+      OVS.filed5[st.code][dy]=filedK;
+      OVS.net5[st.code][dy]=de?aggTill(de).net:0;
+      OVS.prep5[st.code][dy]=rows.prep?rows.prep.data:null;
+      if(dy===1){ const pr2=rowsOf(st.code,'P'); OVS.postAll[st.code]=pr2.post?pr2.post.data:null; }
       const sys=de?Number(de.cashInSystem||0):(dp?Number(dp.cashInSystem||0):0);
       const dep=dp?Number(dp.cashDeposited||0):0;
       const dvar=dp?Number(dp.variance||0):0;
@@ -3405,7 +3303,8 @@ function ovBuild(){
       /* wagers + guards */
       ["wager","guard"].forEach(m=>{
         const r=rows["shift_"+m]?rows["shift_"+m].data:null;
-        const T={dem:0,arr:0,short:0,late:0,early:0,first:0,mid:0,last:0,male:0,female:0};
+        const T={dem:0,arr:0,short:0,late:0,early:0,first:0,mid:0,last:0,male:0,female:0,mins:0};
+        T.ppl=[];
         if(r){
           T.dem=Number(r.requested||0); T.arr=Number(r.arrived||0); T.short=Math.max(0,T.dem-T.arr);
           (r.people||[]).forEach(pp=>{
@@ -3414,6 +3313,14 @@ function ovBuild(){
             const sh=pp["f-sshift"]||"";
             if(sh==="First")T.first++; else if(sh==="Mid")T.mid++; else T.last++;
             if((pp["f-sgender"]||"")==="Male")T.male++; else if(pp["f-sgender"])T.female++;
+            /* hours worked (overnight wraps) */
+            const mm=t=>{ if(!t)return null; const q=String(t).split(":"); return (+q[0])*60+(+q[1]); };
+            let ain=mm(pp["f-sin"]), aout=mm(pp["f-sout"]);
+            let pm=null;
+            if(ain!=null&&aout!=null){ if(aout<ain)aout+=24*60; pm=aout-ain; T.mins+=pm; }
+            const def=(r.shifts||[]).find(x=>x.name===sh)||{};
+            T.ppl.push({n:pp["f-sname"]||"",sh:sh,i:pp["f-sin"]||"",o:pp["f-sout"]||"",m:pm,fl:fl,g:pp["f-sgender"]||"",
+                        si:def.from||"",so:def.to||"",co:pp["f-scompany"]||"",ct:pp["f-scontact"]||""});
           });
         }
         (m==="wager"?OVS.wager5:OVS.guard5)[st.code][dy]=T;
@@ -3421,21 +3328,31 @@ function ovBuild(){
       /* rating */
       const pf=rows.performance?rows.performance.data:null;
       const rt={people:0,low:0,good:0,flagged:0};
+      rt.ppl=[];
       if(pf){ (pf.people||[]).forEach(x=>{ rt.people++;
         const v=Object.values(x.scores||{}).filter(z=>z!=null);
-        if(v.length&&Math.min.apply(null,v)<=2)rt.low++; else rt.good++; }); }
+        const isLow=v.length&&Math.min.apply(null,v)<=2;
+        if(isLow)rt.low++; else rt.good++;
+        rt.ppl.push({n:x.name||"",md:x.module==="guard"?"Guard":"Wager",w:ovWordScore(x.scores),low:!!isLow,rm:x.remark||""}); }); }
       rt.flagged=(OVS.wager5[st.code][dy].late||0)+(OVS.wager5[st.code][dy].early||0)
                 +(OVS.guard5[st.code][dy].late||0)+(OVS.guard5[st.code][dy].early||0);
       OVS.rating5[st.code][dy]=rt;
-      /* budget */
+      /* budget — real per-category spend, never assumed mixes */
       const bg=rows.budget?rows.budget.data:null;
       const daySpend=bg?Number(bg.dayTotal||0):0;
       if(bg&&Number(bg.allocated||0))alloc=Number(bg.allocated);
       cum+=daySpend;
-      OVS.budget5[st.code][dy]={alloc:alloc,daySpend:daySpend,toDate:cum,remaining:alloc-cum};
+      OVS.budget5[st.code][dy]={alloc:alloc,daySpend:daySpend,toDate:cum,remaining:alloc?alloc-cum:null};
+      if(bg&&bg.categories){ OVS.budCats[st.code]=OVS.budCats[st.code]||{};
+        Object.keys(bg.categories).forEach(k=>{ const v=Number(bg.categories[k]||0);
+          OVS.budCats[st.code][k]=(OVS.budCats[st.code][k]||0)+v; }); }
       /* till lines for cashier variance */
-      if(de)(de.tills||[]).forEach(t=>OVS.tillLines.push({store:st.name,region:st.region,day:dy,
-        cashier:t.cashier||"",payroll:t.payroll||("Till "+t.pos),result:t.result||"Balanced",amount:Number(t.amount||0)}));
+      if(de)(de.tills||[]).forEach(t=>{
+        const cashVar=(t.variance!=null&&t.variance!=="")?Number(t.variance):(t.result==="Short"?-Number(t.amount||0):t.result==="Over"?Number(t.amount||0):0);
+        const cardVar=(t.cardVariance!=null&&t.cardVariance!=="")?Number(t.cardVariance):(t.cardResult==="Short"?-Number(t.cardAmount||0):t.cardResult==="Over"?Number(t.cardAmount||0):0);
+        OVS.tillLines.push({store:st.name,region:st.region,day:dy,
+          cashier:t.cashier||"",payroll:t.payroll||("Till "+t.pos),result:t.result||"Balanced",amount:Number(t.amount||0),
+          cardResult:t.cardResult||"",cardAmount:Number(t.cardAmount||0),cashVar:cashVar,cardVar:cardVar}); });
     }
   });
 
@@ -3451,7 +3368,7 @@ function ovBuild(){
   });
 }
 
-const OV_MODS=[["picks","Cash pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Security guards"],["dayend","Till variance & reconciliation"],["deposit","Bank deposit"],["budget","Event budget"],["performance","Staff rating"]];
+const OV_MODS=[["picks","Cash pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Security guards"],["dayend","Till variance & reconciliation"],["deposit","Bank deposit"],["budget","Event budget"],["performance","Staff rating"],["support","Head office attendance"]];
 function ovWordScore(scores){ const v=Object.values(scores||{}).filter(x=>x!=null); if(!v.length) return "Good"; const m=Math.min.apply(null,v); return ((PERF_SCALE.find(o=>o.v===m)||{}).w)||"Good"; }
 function ovPersonFlags(rec,pp){ const def=(rec.shifts||[]).find(s=>s.name===pp["f-sshift"]); return def?personFlags(def.from,def.to,pp["f-sin"],pp["f-sout"]):[]; }
 
@@ -3467,17 +3384,34 @@ function ovModule(code,key){
     if(Number(rec.shortfall)>0) exc.push("Short "+rec.shortfall+(rec.shortfallReason?" — "+rec.shortfallReason:""));
     (rec.people||[]).forEach(pp=>{ const fl=ovPersonFlags(rec,pp); fl.forEach(f=> exc.push(esc(pp["f-sname"])+": "+f)); });
     const sh=(rec.shifts||[]).filter(s=>s.from||s.req!=="0").map(s=>'<div class="ov-l">'+esc(s.name)+' shift · '+(s.from?fmt12(s.from)+"–"+fmt12(s.to)+" · ":"")+word+" "+s.req+" · arrived "+s.arr+'</div>').join("");
-    const ppl=(rec.people||[]).map(pp=>{ const fl=ovPersonFlags(rec,pp); return '<div class="ov-l">'+esc(pp["f-sname"])+' · '+esc(pp["f-sshift"]||"")+' · in '+fmt12(pp["f-sin"])+' out '+fmt12(pp["f-sout"])+(fl.length?" "+flagChips(fl):"")+'</div>'; }).join("");
+    const ppl=(rec.people||[]).map(pp=>{ const fl=ovPersonFlags(rec,pp);
+      const hrs=(pp["f-sin"]&&pp["f-sout"])?' · <b>'+hoursWorked(pp["f-sin"],pp["f-sout"])+' worked</b>':'';
+      return '<div class="ov-l">'+esc(pp["f-sname"])+' · '+esc(pp["f-sshift"]||"")+' · in '+fmt12(pp["f-sin"])+' out '+fmt12(pp["f-sout"])+hrs+(fl.length?" "+flagChips(fl):"")+'</div>'; }).join("");
     return {sum:rec.arrived+" of "+rec.requested+" arrived", exc, detail:sh+ppl}; }
   if(key==="dayend"){ const exc=[];
-    (rec.tills||[]).forEach(t=>{ if(t.result!=="Balanced") exc.push("Till "+t.pos+" "+t.result+" "+pkr(t.amount)+(t.remarks?" ("+t.remarks+")":"")); });
+    (rec.tills||[]).forEach(t=>{
+      const cv=Number(t.variance||0)||(t.result==="Short"?-Number(t.amount||0):t.result==="Over"?Number(t.amount||0):0);
+      const kv=Number(t.cardVariance||0)||(t.cardResult==="Short"?-Number(t.cardAmount||0):t.cardResult==="Over"?Number(t.cardAmount||0):0);
+      if(t.result&&t.result!=="Balanced") exc.push("Till "+t.pos+" cash "+t.result+" "+pkr(t.amount)+(t.remarks?" ("+t.remarks+")":""));
+      if(t.cardResult&&t.cardResult!=="Matches") exc.push("Till "+t.pos+" card "+t.cardResult+" "+pkr(t.cardAmount||0));
+      if((cv+kv)===0&&((t.result&&t.result!=="Balanced")||(t.cardResult&&t.cardResult!=="Matches")))
+        exc.push("Till "+t.pos+" ("+(t.cashier||"")+"): settles to 0 but errors on BOTH sides"); });
     const cdiff=Number(rec.cardInSystem||0)-Number(rec.cardSettled||0); if(cdiff!==0) exc.push("Card off by "+pkr(Math.abs(cdiff)));
     if((rec.fakeNotes||[]).length) exc.push("Fake notes found: "+rec.fakeNotes.length);
     if(rec.secondPickupDone==="No") exc.push("2nd pick-up not done — cash held overnight");
-    const tills=(rec.tills||[]).map(t=>'<div class="ov-l">Till '+t.pos+': '+esc(t.cashier)+' · '+esc(t.result)+(Number(t.amount)?" "+pkr(t.amount):"")+(t.remarks?" ("+esc(t.remarks)+")":"")+'</div>').join("");
+    const tills=(rec.tills||[]).map(t=>{
+      const cv=Number(t.variance||0)||(t.result==="Short"?-Number(t.amount||0):t.result==="Over"?Number(t.amount||0):0);
+      const kv=Number(t.cardVariance||0)||(t.cardResult==="Short"?-Number(t.cardAmount||0):t.cardResult==="Over"?Number(t.cardAmount||0):0);
+      const nt=cv+kv;
+      return '<div class="ov-l">Till '+t.pos+': '+esc(t.cashier)+' · cash '+esc(t.result||"—")+(Number(t.amount)?" "+pkr(t.amount):"")
+        +(t.cardResult?' · card '+esc(t.cardResult)+(Number(t.cardAmount)?" "+pkr(t.cardAmount):""):'')
+        +' · <b style="color:'+(nt<0?'#B3261E':nt>0?'#1B6B4A':'#6b7280')+'">net '+(nt===0?'0':(nt>0?'+':'−')+pkr(Math.abs(nt)))+'</b>'
+        +(t.remarks?" ("+esc(t.remarks)+")":"")+'</div>'; }).join("");
     const recon='<div class="ov-l">Cash: system '+pkr(rec.cashInSystem)+' · to '+esc(rec.citVendor)+' '+pkr(rec.cashHandedOver)+' · at store '+pkr(rec.cashAtStore)+'</div>'
       +'<div class="ov-l">Card: system '+pkr(rec.cardInSystem)+' · settled '+pkr(rec.cardSettled)+'</div>';
-    return {sum:(rec.tills||[]).length+" tills · shortage "+pkr(rec.declaredShortage)+" · excess "+pkr(rec.declaredExcess), exc, detail:tills+recon}; }
+    const A3=aggTill(rec);
+    const netLine='<div class="ov-l" style="font-weight:700;'+(A3.net<0?'color:#B3261E':'color:#1B6B4A')+'">Total net impact: '+(A3.net===0?'PKR 0 — balanced':((A3.net>0?'+':'−')+pkr(Math.abs(A3.net))))+' <small style="font-weight:400;color:#6b7280">(cash '+(A3.over-A3.short>=0?'+':'−')+pkr(Math.abs(A3.over-A3.short))+' · card '+(A3.cardOver-A3.cardShort>=0?'+':'−')+pkr(Math.abs(A3.cardOver-A3.cardShort))+')</small></div>';
+    return {sum:(rec.tills||[]).length+" tills · cash short "+pkr(A3.short)+" · cash excess "+pkr(A3.over)+" · card "+(A3.card===0?"matches":(A3.card>0?"short "+pkr(A3.cardShort):"excess "+pkr(A3.cardOver))), exc, detail:tills+recon+netLine}; }
   if(key==="deposit"){ const v=Number(rec.variance||0), exc=[];
     if(v!==0) exc.push("Deposit "+(v<0?"short":"over")+" by "+pkr(Math.abs(v))+(rec.varianceReason?" — "+rec.varianceReason:" — no reason given"));
     const detail='<div class="ov-l">In system '+pkr(rec.cashInSystem)+' · deposited '+pkr(rec.cashDeposited)+' on '+esc(rec.depositDate||"")+'</div>'
@@ -3488,6 +3422,16 @@ function ovModule(code,key){
     if(over) exc.push("Overspent by "+pkr(Math.abs(Number(rec.remaining)))+(rec.overspendReason?" — "+rec.overspendReason:" — no reason given"));
     const detail=CONFIG.BUDGET_CATEGORIES.map(c=>{ const val=(rec.categories||{})[c.key]; return (val==null)?"":'<div class="ov-line"><span>'+esc(c.label)+'</span><span>'+pkr(val)+'</span></div>'; }).join("");
     return {sum:"spent "+pkr(rec.dayTotal)+" · "+(over?"OVER by "+pkr(Math.abs(Number(rec.remaining))):"remaining "+pkr(rec.remaining)), exc, detail:'<div class="ov-lines">'+detail+'</div>'}; }
+  if(key==="support"){ const ppl=(rec.it||[]).concat(rec.ho||[]), exc=[];
+    const g=15, mins=t=>{ if(!t)return null; const m=String(t).split(":"); return (+m[0])*60+(+m[1]); };
+    ppl.forEach(pp=>{ const ri=mins(pp.reqIn),ai=mins(pp.actIn),ro=mins(pp.reqOut),ao=mins(pp.actOut);
+      if(ri!=null&&ai!=null&&ai>ri+g) exc.push(esc(pp.name)+": Late in");
+      if(ro!=null&&ao!=null&&ao<ro-g) exc.push(esc(pp.name)+": Early out"); });
+    const line=pp=>'<div class="ov-l">'+esc(pp.name)+(pp.contact?' · ☎ '+esc(pp.contact):'')+' · '+(pp.actIn?fmt12(pp.actIn):'—')+' → '+(pp.actOut?fmt12(pp.actOut):'—')
+      +((pp.actIn&&pp.actOut)?' · <b>'+hoursWorked(pp.actIn,pp.actOut)+' worked</b>':'')+'</div>';
+    const detail=(rec.it&&rec.it.length?'<div class="ov-l"><b>IT support</b></div>'+rec.it.map(line).join(""):"")
+      +(rec.ho&&rec.ho.length?'<div class="ov-l"><b>Head office</b></div>'+rec.ho.map(line).join(""):"");
+    return {sum:ppl.length+" on site ("+(rec.it||[]).length+" IT · "+(rec.ho||[]).length+" HO)", exc, detail}; }
   if(key==="performance"){ const ppl=rec.people||[], exc=[];
     ppl.forEach(p=>{ const vals=Object.values(p.scores||{}).filter(x=>x!=null); if(vals.length && Math.min.apply(null,vals)<=2) exc.push((p.module==="guard"?"Guard ":"Wager ")+esc(p.name)+": "+ovWordScore(p.scores)+(p.remark?" — "+p.remark:"")); });
     const detail=ppl.map(p=>'<div class="ov-l">'+esc(p.name)+' · '+(p.module==="guard"?"Guard":"Wager")+' · <b>'+ovWordScore(p.scores)+'</b>'+(p.remark?" · "+esc(p.remark):"")+'</div>').join("");
@@ -3507,15 +3451,21 @@ function ovLatestFresh(code){ const rec=OVS.data[code]||{}; const m=rec._meta||{
 function ovStaleCount(code){ const m=(OVS.data[code]||{})._meta||{}; return Object.values(m).filter(at=>freshness(at).stale).length; }
 
 /* ---- entry points ---- */
-async function ovStart(role, mgr){ OVROLE=role; OVOPEN=null; OVEXPAND={}; OVFILTER="all"; OVMOD="home";
+async function ovStart(role, mgr, actMgr, dept){ OVROLE=role; OVOPEN=null; OVEXPAND={}; OVFILTER="all"; OVMOD="home"; OVACT=actMgr||""; OVDEPT=dept||"";
   try{ const o=await ovFetch(); if(!o.ok){ note($("gateMsg"),o.error||"Could not load data.","bad"); return; } OVPAYLOAD=o; }
   catch(e){ note($("gateMsg"),"No connection — could not load the data.","bad"); return; }
   ovBuild();
   if(role==="cluster"){ OVREGION=mgr||""; OVCONTAINER="clBody"; $("clHead").textContent="Cluster manager: "+OVREGION+" · "+OVS.dayLabel; show("cluster"); }
+  else if(role==="regional"){ OVREGION=""; OVRM=mgr||""; OVCONTAINER="clBody";
+    $("clHead").textContent="Regional manager: "+OVRM+" · review only"+(OVACT?" (sign-off for your own cluster)":"")+" · "+OVS.dayLabel; show("cluster"); }
+  else if(role==="dept"){ OVREGION=""; OVRM=mgr||""; OVCONTAINER="clBody"; OVMOD="shift_"+OVDEPT;
+    OVSHIFTDAY=OVS.day; OVRATEDAY=OVS.day;
+    $("clHead").textContent=(mgr||("Department — "+OVDEPT))+" · all stores · review only · "+OVS.dayLabel; show("cluster"); }
   else { OVREGION=""; OVCONTAINER="revPane"; show("review"); }
   ovRender(); }
 async function ovRefresh(){ try{ const o=await ovFetch(); if(o.ok){ OVPAYLOAD=o; ovBuild(); ovRender(); } }catch(e){} }
-function ovScopeStores(){ return OVS.stores.filter(s=> OVROLE==="hq" || s.region===OVREGION); }
+function ovScopeStores(){ if(OVROLE==="cluster") return OVS.stores.filter(s=>s.region===OVREGION);
+  return OVS.stores; }   /* hq = all; regional = server already sends ONLY their region's stores */
 function ovRender(){ const box=$(OVCONTAINER); if(!box) return; box.innerHTML = OVOPEN ? ovDrill(OVOPEN) : ovLens(); window.scrollTo(0,0); }
 function ovOpen(code){ OVOPEN=code; OVEXPAND={}; ovRender(); }
 function ovBack(){ OVOPEN=null; ovRender(); }
@@ -3538,37 +3488,55 @@ function ovList(){
   const passFilter=(code)=>{ const st=ovStatus(code); if(OVFILTER==="all")return true;
     if(OVFILTER==="action") return st==="pending"||st==="flagged"||st==="partial"||st==="notsub";
     if(OVFILTER==="exceptions") return st==="flagged"; if(OVFILTER==="signed") return st==="signed"; return true; };
-  // group by region
-  const regions=[...new Set(stores.map(s=>s.region))];
-  let listHtml="";
-  regions.forEach(rg=>{ const rs=stores.filter(s=>s.region===rg && passFilter(s.code)); if(!rs.length) return;
-    listHtml+='<div class="card"><div class="card-head"><h3>'+esc(rg)+' region</h3><span class="hint">'+rs.length+' store'+(rs.length>1?"s":"")+'</span></div>'
-     +rs.map(s=>{ const st=ovStatus(s.code), fr=ovLatestFresh(s.code), ex=ovModExc(s.code), ap=((OVS.data[s.code]||{}).amendments||[]).length;
-        return '<div class="ov-srow" onclick="ovOpen(\''+s.code+'\')"><div class="ov-nm">'+esc(s.name)
-          +'<small>'+(st==="notsub"?"Nothing filed yet":(ovFilled(s.code)+" of 7 filed"+(ex?" · "+ex+" exception"+(ex>1?"s":""):"")+(ap?" · "+ap+" waiting":"")))
-          +(fr?' · <span class="'+(freshness(fr).stale?"ov-stale":"ov-ok")+'">updated '+esc(freshness(fr).txt)+'</span>':'')+'</small></div>'
-          +'<span class="ov-chip '+st+'">'+OV_LABEL[st]+'</span></div>'; }).join("")
-     +'</div>'; });
-  if(!listHtml) listHtml='<div class="card"><div class="card-body"><span class="meta">No stores match this filter.</span></div></div>';
-  return strip+listHtml;
+  /* store × module MATRIX — every module shown against the store, not just a count */
+  const dy=OVS.day, depDue=ovDepositDue(dy);
+  const SHORTM={picks:"Pick-ups",shift_wager:"Wagers",shift_guard:"Guards",dayend:"Till",deposit:"Deposit",budget:"Budget",performance:"Rating",support:"HO att."};
+  const list=stores.filter(s=>passFilter(s.code)).map(s=>({s:s,st:ovStatus(s.code),filed:(((OVS.filed5[s.code]||{})[dy])||[])}))
+    .sort((a,b)=>a.filed.length-b.filed.length||a.s.name.localeCompare(b.s.name));
+  if(!list.length) return strip+'<div class="card"><div class="card-body"><span class="meta">No stores match this filter.</span></div></div>';
+  const th='<tr><th class="stk">Store</th><th>Cluster manager</th>'
+    +OV_MODS.map(m=>'<th>'+SHORTM[m[0]]+(m[0]==="deposit"&&!depDue?'<br><small style="font-weight:400">due tmrw</small>':'')+'</th>').join("")
+    +'<th>Status</th><th>Updated</th></tr>';
+  const cellM=(has,req)=> has?'<td style="color:#1B6B4A;font-weight:800">✓</td>':(req?'<td class="cell-bad" style="font-weight:800">✗</td>':'<td class="muted">◦</td>');
+  const trs=list.map(o=>{
+    const fr=ovLatestFresh(o.s.code), frC=fr?freshness(fr):null;
+    return '<tr onclick="ovOpen(\''+o.s.code+'\')"><td class="stk">'+esc(o.s.name)+'</td><td class="muted">'+esc(o.s.region)+'</td>'
+      +OV_MODS.map(m=>cellM(o.filed.indexOf(m[0])>-1,(m[0]!=="deposit")||depDue)).join("")
+      +'<td><span class="ov-chip '+o.st+'">'+OV_LABEL[o.st]+'</span></td>'
+      +'<td class="'+(frC&&frC.stale?"cell-warn":"muted")+'">'+(frC?(frC.stale?"⚠ ":"")+esc(frC.txt):"—")+'</td></tr>';
+  }).join("");
+  const tot='<tr class="ov-tot"><td class="stk">Filed · '+list.length+' stores</td><td></td>'
+    +OV_MODS.map(m=>{ const n=list.filter(o=>o.filed.indexOf(m[0])>-1).length;
+      return '<td class="'+(n===list.length?"":"cell-warn")+'">'+n+'/'+list.length+'</td>'; }).join("")+'<td></td><td></td></tr>';
+  return strip
+    +'<div class="ov-cashbar"><div><b>Compliance overview — store × module</b> · '+esc(OVS.dayLabel)+'</div><button class="btn btn-line btn-sm" onclick="ovOverviewCsv()">⬇ Download CSV</button></div>'
+    +'<div class="ov-scroll"><table class="ov-tbl">'+th+trs+tot+'</table></div>'
+    +'<p class="meta" style="margin:8px 2px 0">✓ filed · ✗ missing (required) · ◦ deposit not yet due (does not count against the store). Least-filed stores first — tap a row to open the store\'s day.</p>';
 }
 
 function ovDrill(code){
   const s=OVS.stores.find(x=>x.code===code), rec=OVS.data[code]||{}, st=ovStatus(code), can=ovCanAct(code);
-  let html='<button class="cl-back" onclick="ovBack()">‹ Back to '+(OVROLE==="cluster"?"region":"all stores")+'</button>'
-    +'<div class="card"><div class="card-head"><h3>'+esc(s.name)+'</h3><span class="ov-chip '+st+'">'+OV_LABEL[st]+'</span></div>'
-    +'<div class="card-body"><span class="meta">'+esc(s.region)+' · '+OVS.dayLabel+' · '+ovFilled(code)+' of 7 modules filed'+(can?"":" · view only")+'</span></div></div>'+itRepCard(s.name)+ovIncDrillCard(code);
-  if(st==="notsub") return html+'<div class="card"><div class="card-body"><div class="ov-blk">This store has not submitted anything for '+esc(OVS.dayLabel)+' yet.</div></div></div>';
-  // pending amendments
-  const am=(rec.amendments||[]);
+  const isDept=OVROLE==="dept";
+  const MODS=isDept?OV_MODS.filter(m=>ovDeptMods().indexOf(m[0])>-1):OV_MODS;
+  const filled=isDept?MODS.filter(m=>rec[m[0]]).length:ovFilled(code);
+  let html='<button class="cl-back" onclick="ovBack()">‹ Back to '+(OVROLE==="cluster"?"region":OVROLE==="dept"?"report":"all stores")+'</button>'
+    +'<div class="card"><div class="card-head"><h3>'+esc(s.name)+'</h3>'+(isDept?'':'<span class="ov-chip '+st+'">'+OV_LABEL[st]+'</span>')+'</div>'
+    +'<div class="card-body"><span class="meta">'+esc(s.region)+' · '+OVS.dayLabel+' · '+filled+' of '+MODS.length+' modules filed'+(can?"":" · view only")+'</span></div></div>'
+    +(isDept?'':itRepCard(s.name)+ovIncDrillCard(code)+ovPrepCard(code,OVS.day)+(OVS.day<5&&(OVS.prep5[code]||{})[OVS.day+1]?ovPrepCard(code,OVS.day+1):'')+ovPostCard(code));
+  if(isDept&&filled===0) return html+'<div class="card"><div class="card-body"><div class="ov-blk">Nothing filed for '+esc(OVS.dayLabel)+' yet in your module.</div></div></div>';
+  if(!isDept&&st==="notsub") return html+'<div class="card"><div class="card-body"><div class="ov-blk">This store has not submitted anything for '+esc(OVS.dayLabel)+' yet.</div></div></div>';
+  // pending amendments (never sent to departments)
+  const am=isDept?[]:(rec.amendments||[]);
   if(am.length){
     html+='<div class="card"><div class="card-head"><h3>Money changes awaiting approval</h3><span class="hint">'+am.length+' waiting</span></div><div class="card-body">'
       +am.map((p,i)=>apvCard(s,p,i,false)).join("")+'</div></div>';
   }
   // modules
   html+='<div class="card"><div class="card-head"><h3>Modules</h3><span class="hint">tap a row for full detail</span></div>';
-  OV_MODS.forEach(m=>{ const key=m[0], r=ovModule(code,key), at=(rec._meta||{})[key];
+  MODS.forEach(m=>{ const key=m[0], r=ovModule(code,key), at=(rec._meta||{})[key];
     if(!r){ html+='<div class="ov-mrow off"><div class="ov-mh"><span class="ov-mn">'+esc(m[1])+'</span>'+freshBadge(null)+'</div><div class="ov-msum">Not filed</div></div>'; return; }
+    const rawRec=(key==="picks")?((rec.picks||[])[0]||{}):(rec[key]||{});
+    if(rawRec.filedLate) r.exc.push("⏰ Filed late — catch-up entry");
     const open=OVEXPAND[code+"|"+key];
     html+='<div class="ov-mrow'+(r.exc.length?" has-exc":"")+'" onclick="ovToggle(\''+code+'\',\''+key+'\')">'
       +'<div class="ov-mh"><span class="ov-mn">'+esc(m[1])+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></span>'+freshBadge(at)+'</div>'
@@ -3578,52 +3546,92 @@ function ovDrill(code){
       +'</div>';
   });
   html+='</div>';
-  // sign-off
-  html+=ovSignCard(code,st,can);
+  // sign-off (departments never see it — they only review their module)
+  if(OVROLE!=="dept") html+=ovSignCard(code,st,can);
   return html;
 }
 function ovSignCard(code,st,can){
   const s=OVS.stores.find(x=>x.code===code), rec=OVS.data[code]||{};
   if(st==="signed"){ const info=rec.signoff;
+    const modsLine=(info.mods&&info.mods.length)?'<div class="meta" style="margin-top:6px">Modules reviewed &amp; ticked: '+info.mods.map(x=>'<span class="ovh-b green">'+esc(x)+' ✓</span>').join(" ")+'</div>':'';
     return '<div class="card"><div class="card-body"><div class="cl-signed">✓ <b>Signed off</b> by '+esc(info.by)+' · '+esc(freshness(info.at).txt)+'. Day closed &amp; locked.</div>'
+      +modsLine
       +(can?'<div class="cl-acts"><button class="btn btn-line" onclick="ovReopen(\''+code+'\')">Reopen day</button></div>':'')+'</div></div>'; }
+  /* requirement checklist — sign-off is judged against what is REQUIRED for this day */
+  const dy=OVS.day, filed=((OVS.filed5[code]||{})[dy])||[], depDue=ovDepositDue(dy);
+  const missingReq=OV_MODS.map(m=>m[0]).filter(k=>((k!=="deposit")||depDue) && filed.indexOf(k)<0);
+  /* view-only checklist (no ticks) for people who cannot act */
+  const checklistRO='<div style="margin:0 0 10px">'+OV_MODS.map(m=>{
+    const k=m[0], has=filed.indexOf(k)>-1, req=(k!=="deposit")||depDue;
+    const mark=has?"✓":(req?"✗":"◦"), clr=has?"#1B6B4A":(req?"#B3261E":"#8A5A00");
+    const note2=(!has&&!req)?' <small style="color:#8A5A00">— due tomorrow morning · does not block</small>':'';
+    return '<div style="display:flex;gap:8px;font-size:13px;padding:2.5px 0"><span style="color:'+clr+';font-weight:800;width:14px">'+mark+'</span><span>'+esc(m[1])+note2+'</span></div>';
+  }).join("")+'</div>';
   let blk="";
   if((rec.amendments||[]).length) blk="Clear the money changes above before signing off.";
-  else if(st==="flagged") blk="Exceptions are open — review them, then sign off if acceptable.";
-  else if(st==="partial") blk="Not every module is filed yet.";
-  else if(st==="notsub") blk="Nothing submitted yet.";
-  if(!can) return '<div class="card"><div class="card-body"><div class="ov-blk">Sign-off is done by cluster manager '+esc(s.region)+'.</div></div></div>';
-  const canSign=!blk || st==="flagged"; // exceptions can still be signed off after review
-  return '<div class="card"><div class="card-head"><h3>'+(OVROLE==="hq"?"Head office":"Cluster")+' sign-off</h3><span class="hint">closes &amp; locks the day</span></div><div class="card-body">'
-    +(blk&&st!=="flagged"?'<div class="ov-blk">🚫 '+esc(blk)+'</div>':'')
-    +(st==="flagged"?'<div class="ov-warn">Exceptions are open. Review them above; sign off only if they are acceptable.</div>':'')
-    +'<label class="cl-lock"><input type="checkbox" id="ovAck" '+(canSign?"":"disabled")+' onchange="ovWireSign()"><span>I have reviewed '+esc(s.name.split(",")[0])+"'s "+OVS.dayLabel+' and confirm the figures are correct.</span></label>'
-    +'<button class="btn" id="ovSignBtn" disabled onclick="ovSignoff(\''+code+'\')" style="width:100%">Sign off &amp; lock day</button></div></div>';
+  else if(missingReq.length){ const names=missingReq.map(k=>(OV_MODS.find(m=>m[0]===k)||[])[1]||k);
+    blk="Cannot sign off yet — "+missingReq.length+" required item"+(missingReq.length>1?"s":"")+" missing: "+names.join(", ")+"."; }
+  if(!can) return '<div class="card"><div class="card-head"><h3>Required for sign-off</h3><span class="hint">'+(OV_MODS.length-((!depDue)?1:0)-missingReq.length)+' of '+(OV_MODS.length-((!depDue)?1:0))+' done</span></div><div class="card-body">'+checklistRO+'<div class="ov-blk">Sign-off is done by cluster manager '+esc(s.region)+'.</div></div></div>';
+  const canSign=!blk; // exceptions warn but never block; missing REQUIRED modules block
+  /* MODULE-WISE sign-off: a tick box against every filed module — all must be
+     ticked before the day can be signed. Missing required modules show ✗ (block);
+     deposit-not-yet-due shows ◦ (never blocks, no tick needed). */
+  const tickList='<div style="margin:0 0 10px">'+OV_MODS.map(m=>{
+    const k=m[0], has=filed.indexOf(k)>-1, req=(k!=="deposit")||depDue;
+    if(has) return '<label style="display:flex;gap:9px;align-items:center;font-size:13.5px;padding:4px 0;cursor:pointer">'
+      +'<input type="checkbox" class="ovModTick" data-k="'+k+'" data-lab="'+esc(m[1])+'" '+(canSign?"":"disabled")+' onchange="ovWireSign()">'
+      +'<span><b>'+esc(m[1])+'</b> — reviewed &amp; correct</span></label>';
+    if(!req) return '<div style="display:flex;gap:8px;font-size:13px;padding:2.5px 0"><span style="color:#8A5A00;font-weight:800;width:14px">◦</span><span>'+esc(m[1])+' <small style="color:#8A5A00">— due tomorrow morning · does not block</small></span></div>';
+    return '<div style="display:flex;gap:8px;font-size:13px;padding:2.5px 0"><span style="color:#B3261E;font-weight:800;width:14px">✗</span><span>'+esc(m[1])+' <small style="color:#B3261E">— not filed yet</small></span></div>';
+  }).join("")+'</div>';
+  return '<div class="card"><div class="card-head"><h3>'+(OVROLE==="hq"?"Head office":"Cluster")+' sign-off — module by module</h3><span class="hint">tick every module, then lock the day</span></div><div class="card-body">'
+    +tickList
+    +(blk?'<div class="ov-blk">🚫 '+esc(blk)+'</div>':'')
+    +(!blk&&st==="flagged"?'<div class="ov-warn">Exceptions are open. Review them above; sign off only if they are acceptable.</div>':'')
+    +'<button class="btn" id="ovSignBtn" disabled onclick="ovSignoff(\''+code+'\')" style="width:100%">Sign off &amp; lock day</button>'
+    +'<p class="meta" style="margin:8px 0 0" id="ovSignHint">'+(canSign?'Tick every filed module above to enable sign-off.':'')+'</p></div></div>';
 }
-function ovWireSign(){ const a=$("ovAck"), b=$("ovSignBtn"); if(a&&b) b.disabled=!(a.checked&&!a.disabled); }
+function ovWireSign(){ const b=$("ovSignBtn"); if(!b) return;
+  const ticks=[...document.querySelectorAll(".ovModTick")];
+  const left=ticks.filter(t=>!t.checked).length;
+  b.disabled=!(ticks.length&&left===0&&!ticks[0].disabled);
+  const h=$("ovSignHint"); if(h) h.textContent = left===0?"All modules ticked — you can sign off.":(left+" module"+(left>1?"s":"")+" still to review & tick.");
+}
 async function ovDecide(code,i,decision){
   const rec=OVS.data[code]; if(!rec||!rec.amendments[i])return;
   const p=rec.amendments[i];
+  const remEl=document.getElementById("apvRem-"+String(p.id));
+  const remarks=remEl?remEl.value.trim():"";
+  if(decision==="reject"&&!remarks){ toast("Add remarks for the store — say why this change is not approved."); if(remEl)remEl.focus(); return; }
   try{
     const res=await fetch(CONFIG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body:JSON.stringify({action:"amend-decide",code:ACCESS_CODE,id:p.id,decision:decision})});
+      body:JSON.stringify({action:"amend-decide",code:ACCESS_CODE,id:p.id,decision:decision,remarks:remarks})});
     const o=await res.json();
     if(!o.ok){ toast(o.error||"Could not save the decision."); return; }
     rec.amendments.splice(i,1);
-    toast(decision==="approve"?(p.who+" approved — now official."):"Sent back to the store — not approved.");
+    toast((decision==="approve"?(p.who+" approved — now official."):"Sent back to the store — not approved.")+(remarks?" Your remarks went to the store.":""));
     ovRefresh();
   }catch(e){ toast("No connection — decision not saved."); }
 }
 function ovApprove(code,i){ ovDecide(code,i,"approve"); }
 function ovReject(code,i){ ovDecide(code,i,"reject"); }
-async function ovSignoff(code){ const a=$("ovAck"); if(!a||!a.checked){ toast("Tick the box to confirm you reviewed the day."); return; }
+async function ovSignoff(code){
+  const ticks=[...document.querySelectorAll(".ovModTick")];
+  const left=ticks.filter(t=>!t.checked);
+  if(!ticks.length||left.length){ toast("Tick every module to confirm you reviewed each one."); return; }
+  /* re-check the requirement rule — every REQUIRED module must actually be filed */
+  const filedNow=((OVS.filed5[code]||{})[OVS.day])||[];
+  const missingNow=OV_MODS.map(m=>m[0]).filter(k=>((k!=="deposit")||ovDepositDue(OVS.day)) && filedNow.indexOf(k)<0);
+  if(missingNow.length){ toast("Cannot sign off — required modules are still missing."); return; }
+  const mods=ticks.map(t=>t.getAttribute("data-lab"));
   const rec=OVS.data[code]; if((rec.amendments||[]).length){ toast("Clear the money changes first."); return; }
   try{
     const res=await fetch(CONFIG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body:JSON.stringify({action:"signoff",code:ACCESS_CODE,store:code,event:OVS.event,day:String(OVS.day)})});
+      body:JSON.stringify({action:"signoff",code:ACCESS_CODE,store:code,event:OVS.event,day:String(OVS.day),modules:mods})});
     const o=await res.json();
     if(!o.ok){ toast(o.error||"Could not sign off."); return; }
-    rec.signoff={by:(OVROLE==="hq"?"Head office":OVREGION),at:nowMeta()};
+    rec.signoff={by:(OVROLE==="hq"?"Head office":OVROLE==="regional"?OVACT:OVREGION),at:nowMeta(),mods:mods};
+    (OVS.signed5[code]=OVS.signed5[code]||{})[String(OVS.day)]=rec.signoff;
     toast(OVS.stores.find(s=>s.code===code).name.split(",")[0]+" signed off — day closed."); ovRender();
   }catch(e){ toast("No connection — sign-off not saved."); }
 }
@@ -3633,7 +3641,9 @@ async function ovReopen(code){
       body:JSON.stringify({action:"reopen",code:ACCESS_CODE,store:code,event:OVS.event,day:String(OVS.day)})});
     const o=await res.json();
     if(!o.ok){ toast(o.error||"Could not reopen."); return; }
-    const rec=OVS.data[code]; if(rec) rec.signoff=null; toast("Day reopened — awaiting re-sign-off."); ovRender();
+    const rec=OVS.data[code]; if(rec) rec.signoff=null;
+    if(OVS.signed5[code]) delete OVS.signed5[code][String(OVS.day)];
+    toast("Day reopened — awaiting re-sign-off."); ovRender();
   }catch(e){ toast("No connection."); }
 }
 function nowMeta(){ const n=new Date(); const q=x=>String(x).padStart(2,"0"); return n.getFullYear()+"-"+q(n.getMonth()+1)+"-"+q(n.getDate())+" "+q(n.getHours())+":"+q(n.getMinutes()); }
@@ -3642,8 +3652,8 @@ function ovExit(){ location.reload(); }
 
 
 /* ---- module-first cross-store tables (key fields on one screen) ---- */
-let OVMOD="home", OVREGFILTER="", OVCASHDAY=null, OVPICKDAY=2, OVDEPDAY=2, OVSHIFTDAY=2, OVRATEDAY=2, OVBUDDAY=2;
-const OV_LENSES=[["overview","Overview"],["picks","Pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Guards"],["dayend","Till & recon"],["deposit","Deposit"],["budget","Budget"],["performance","Rating"],["cash","Cash report"],["cashiers","Cashier variance"],["incidents","Incidents"],["approvals","Approvals"]];
+let OVMOD="home", OVDAYPICK=null, OVREGFILTER="", OVCASHDAY=null, OVPICKDAY=2, OVDEPDAY=2, OVSHIFTDAY=2, OVRATEDAY=2, OVBUDDAY=2, OVMATKEY="picks", OVCLEXP={}, OVSHIFTEXP={}, OVRATEEXP={}, OVPREPDAY=null;
+const OV_LENSES=[["overview","Overview"],["prep","Sale prep"],["postlens","Post-sale"],["picks","Pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Guards"],["dayend","Till & recon"],["deposit","Deposit"],["budget","Budget"],["performance","Rating"],["cash","Cash report"],["cashiers","Cashier variance"],["incidents","Incidents"],["signoffs","Sign-offs"],["approvals","Approvals"]];
 
 function ovTableStores(){ return ovScopeStores().filter(s=> !OVREGFILTER || s.region===OVREGFILTER); }
 function ovDiff(from,to){ return '<span class="ov-old">'+esc(from)+'</span><span class="ov-arw">→</span><span class="ov-new">'+esc(to)+'</span>'; }
@@ -3656,7 +3666,11 @@ function aggWager(rec){ let late=0,early=0; (rec.people||[]).forEach(pp=>{ const
   const byShift=n=>{ const s=(rec.shifts||[]).find(x=>x.name===n); return s?ovN(s.arr):0; };
   return {dem:ovN(rec.requested),arr:ovN(rec.arrived),short:ovN(rec.shortfall),late,early,s1:byShift(rec.module==="guard"?"First":"First"),s2:byShift("Mid"),s3:byShift(rec.module==="guard"?"Overnight":"Late")}; }
 function aggTill(rec){ const cardDiff=ovN(rec.cardInSystem)-ovN(rec.cardSettled);
-  return {tills:(rec.tills||[]).length,short:ovN(rec.declaredShortage),over:ovN(rec.declaredExcess),card:cardDiff,fakes:(rec.fakeNotes||[]).length}; }
+  const cashShort=ovN(rec.declaredShortage), cashOver=ovN(rec.declaredExcess);
+  const cardShort=Math.max(0,cardDiff), cardOver=Math.max(0,-cardDiff);
+  return {tills:(rec.tills||[]).length,short:cashShort,over:cashOver,card:cardDiff,
+    cardShort:cardShort,cardOver:cardOver,net:(cashOver-cashShort)+(cardOver-cardShort),
+    fakes:(rec.fakeNotes||[]).length}; }
 function aggDep(rec){ return {sys:ovN(rec.cashInSystem),dep:ovN(rec.cashDeposited),varc:ovN(rec.variance),reason:rec.varianceReason||""}; }
 function aggBud(rec){ return {alloc:ovN(rec.allocated),spent:ovN(rec.spentToDate),rem:ovN(rec.remaining)}; }
 function aggRate(rec){ let low=0,names=[]; (rec.people||[]).forEach(p=>{ const v=Object.values(p.scores||{}).filter(x=>x!=null); if(v.length&&Math.min.apply(null,v)<=2){low++;names.push(p.name);} }); return {people:(rec.people||[]).length,low,names}; }
@@ -3687,12 +3701,18 @@ function ovTable(mod){
       {dem:0,arr:0,short:0,late:0,early:0,s1:0,s2:0,s3:0}, (rec)=>{const a=aggWager(rec);tot.dem+=a.dem;tot.arr+=a.arr;tot.short+=a.short;tot.late+=a.late;tot.early+=a.early;tot.s1+=a.s1;tot.s2+=a.s2;tot.s3+=a.s3;},
       ()=>[cell(tot.dem),cell(tot.arr,tot.arr<tot.dem),cell(tot.short,tot.short>0),cell(tot.late,tot.late>0),cell(tot.early,tot.early>0),cell(tot.s1),cell(tot.s2),cell(tot.s3),{v:"",cls:""}]); }
 
-  else if(mod==="dayend"){ head=["Store","Region","Tills","Shortage","Excess","Card diff","Fake notes","Updated"];
-    rowsFor((rec,s)=>{ if(!rec) return [{v:"—",cls:"muted"},{v:"",cls:""},{v:"",cls:""},{v:"",cls:""},{v:"",cls:""},frCell(null)];
+  else if(mod==="dayend"){ head=["Store","Region","Tills","Cash short","Cash excess","Card short","Card excess","Net impact","Fake notes","Updated"];
+    const netCell=(n)=>({v:(n===0?"0":(n>0?"+":"−")+pkr(Math.abs(n))),cls:(n<0?"cell-bad":n>0?"":"muted")+" net-imp"});
+    rowsFor((rec,s)=>{ if(!rec) return [{v:"—",cls:"muted"},{v:"",cls:""},{v:"",cls:""},{v:"",cls:""},{v:"",cls:""},{v:"",cls:""},{v:"",cls:""},frCell(null)];
         const a=aggTill(rec);
-        return [ cell(a.tills), cell(pkr(a.short),a.short>0), cell(pkr(a.over),a.over>0), cell(a.card?pkr(Math.abs(a.card)):"0",a.card!==0), cell(a.fakes,a.fakes>0), frCell((OVS.data[s.code]._meta||{}).dayend) ]; },
-      {short:0,over:0,card:0,fakes:0}, (rec)=>{const a=aggTill(rec);tot.short+=a.short;tot.over+=a.over;tot.card+=Math.abs(a.card);tot.fakes+=a.fakes;},
-      ()=>[{v:"",cls:""},cell(pkr(tot.short),tot.short>0),cell(pkr(tot.over),tot.over>0),cell(pkr(tot.card),tot.card>0),cell(tot.fakes,tot.fakes>0),{v:"",cls:""}]); }
+        return [ cell(a.tills), cell(pkr(a.short),a.short>0), cell(pkr(a.over),a.over>0),
+                 cell(pkr(a.cardShort),a.cardShort>0), cell(pkr(a.cardOver),a.cardOver>0),
+                 netCell(a.net), cell(a.fakes,a.fakes>0), frCell((OVS.data[s.code]._meta||{}).dayend) ]; },
+      {short:0,over:0,cardShort:0,cardOver:0,net:0,fakes:0},
+      (rec)=>{const a=aggTill(rec);tot.short+=a.short;tot.over+=a.over;tot.cardShort+=a.cardShort;tot.cardOver+=a.cardOver;tot.net+=a.net;tot.fakes+=a.fakes;},
+      ()=>[{v:"",cls:""},cell(pkr(tot.short),tot.short>0),cell(pkr(tot.over),tot.over>0),
+           cell(pkr(tot.cardShort),tot.cardShort>0),cell(pkr(tot.cardOver),tot.cardOver>0),
+           netCell(tot.net),cell(tot.fakes,tot.fakes>0),{v:"",cls:""}]); }
 
   else if(mod==="deposit"){ head=["Store","Region","In system","Deposited","Variance","Reason","Updated"];
     rowsFor((rec,s)=>{ if(!rec) return [{v:"—",cls:"muted"},{v:"",cls:""},{v:"",cls:""},{v:"",cls:""},frCell(null)];
@@ -3734,6 +3754,33 @@ function incCardHTML(x,showStore){
     +'<div style="font-size:12.5px;color:#3a3f4a;margin-top:6px"><b style="color:#6b7280;font-weight:600">Follow-up:</b> '+esc(x.follow)+'</div>'
     +'</div>';
 }
+function ovSignoffReport(){
+  const stores=ovTableStores();
+  const byMgr={};
+  stores.forEach(s=>{ (byMgr[s.region]=byMgr[s.region]||[]).push(s); });
+  let signedTot=0;
+  const rows=Object.keys(byMgr).sort().map(mgr=>{
+    const list=byMgr[mgr];
+    const signed=list.filter(s=>(OVS.data[s.code]||{}).signoff);
+    const pending=list.filter(s=>!(OVS.data[s.code]||{}).signoff);
+    signedTot+=signed.length;
+    const chip=(s,ok)=>'<span class="ovh-b '+(ok?'green':'amber')+'" style="cursor:pointer" onclick="ovOpen(\''+s.code+'\')">'+esc(s.name.split(",")[0])+(ok?' ✓':'')+'</span>';
+    return '<div class="apv"><div class="apv-head"><span class="apv-store">'+esc(mgr)+'</span>'
+      +'<span class="apv-when"><b>'+signed.length+' of '+list.length+'</b> signed off · '+OVS.dayLabel+'</span></div>'
+      +(signed.length?'<div style="margin-top:8px"><span class="apv-lab">Signed off</span><div class="ovh-badges" style="justify-content:flex-start;margin-top:4px">'+signed.map(s=>chip(s,true)).join(" ")+'</div></div>':'')
+      +(pending.length?'<div style="margin-top:8px"><span class="apv-lab" style="color:#8A5A00">Pending</span><div class="ovh-badges" style="justify-content:flex-start;margin-top:4px">'+pending.map(s=>chip(s,false)).join(" ")+'</div></div>'
+        :'<div style="margin-top:8px;color:#1B6B4A;font-size:13px">✓ All stores signed off</div>')
+      +'</div>';
+  }).join("");
+  const csv='<div class="ov-cashbar"><div><b>Sign-offs by cluster manager</b> · '+OVS.dayLabel+'</div><button class="btn btn-line btn-sm" onclick="ovSignoffCsv()">⬇ Download CSV</button></div>';
+  return csv+'<p class="meta" style="margin:0 0 10px"><b>'+signedTot+'</b> of <b>'+stores.length+'</b> stores signed off for '+OVS.dayLabel+'. Tap a store chip to open its review.</p>'+rows;
+}
+function ovSignoffCsv(){
+  const rows=[["Cluster manager","Store","Day","Status","Signed by","At"]];
+  ovTableStores().forEach(s=>{ const so=(OVS.data[s.code]||{}).signoff;
+    rows.push([s.region,s.name,"Day "+OVS.day,so?"Signed off":"Pending",so?so.by:"",so?so.at:""]); });
+  downloadCsv("signoffs-day"+OVS.day+".csv",rows);
+}
 function ovIncidentReport(){
   const codes=ovTableStores().map(s=>s.code);
   let items=(OVS.incidents||[]).filter(i=>codes.includes(i.code));
@@ -3745,10 +3792,13 @@ function ovIncidentReport(){
     +items.map(x=>incCardHTML(x,true)).join("");
 }
 function ovOverviewCsv(){
-  const rows=[["Store","Cluster manager","Status","Modules filed","Approvals waiting","Signed off by","At"]];
-  ovTableStores().forEach(s=>{ const rec=OVS.data[s.code]||{}; rows.push([s.name,s.region,OV_LABEL[ovStatus(s.code)]||"",
-    ovFilled(s.code)+" of "+OV_MODS.length,(rec.amendments||[]).length,rec.signoff?rec.signoff.by:"",rec.signoff?rec.signoff.at:""]); });
-  downloadCsv("compliance-overview.csv",rows);
+  const dy=OVS.day, depDue=ovDepositDue(dy);
+  const rows=[["Store","Cluster manager"].concat(OV_MODS.map(m=>m[1])).concat(["Modules filed","Status","Approvals waiting","Signed off by","At"])];
+  ovTableStores().forEach(s=>{ const rec=OVS.data[s.code]||{}; const filed=(((OVS.filed5[s.code]||{})[dy])||[]);
+    rows.push([s.name,s.region]
+      .concat(OV_MODS.map(m=>filed.indexOf(m[0])>-1?"Filed":((m[0]==="deposit"&&!depDue)?"Not yet due":"MISSING")))
+      .concat([filed.length+" of "+OV_MODS.length,OV_LABEL[ovStatus(s.code)]||"",(rec.amendments||[]).length,rec.signoff?rec.signoff.by:"",rec.signoff?rec.signoff.at:""])); });
+  downloadCsv("compliance-overview-day"+dy+".csv",rows);
 }
 function ovIncidentCsv(){
   const codes=ovTableStores().map(s=>s.code);
@@ -3773,7 +3823,9 @@ function apvCard(s,p,i,showStore){
     +'<div class="apv-what">'+(showStore?esc(p.module)+' · ':'')+'entered by '+esc(p.who)+'</div>'
     +'<div class="apv-change"><span class="apv-lab">Before</span>'+ovDiff(p.from,p.to)+'<span class="apv-lab" style="color:#166534">After</span></div>'
     +'<div class="apv-reason"><b>Store\'s reason:</b> '+esc(p.reason)+'</div>'
-    +(can?'<div class="apv-acts"><button class="apv-no" onclick="ovReject(\''+s.code+'\','+i+')">✕ Not approved</button>'
+    +(can?'<div style="margin-top:9px"><span class="lab">Your remarks to the store <small style="color:#8A5A00">(required if not approved)</small></span>'
+      +'<input type="text" id="apvRem-'+esc(String(p.id))+'" maxlength="300" placeholder="e.g. Approved — recount witnessed / Not approved — attach the recount slip first" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d5d9e0;border-radius:8px;font:inherit;margin-top:3px"></div>'
+      +'<div class="apv-acts"><button class="apv-no" onclick="ovReject(\''+s.code+'\','+i+')">✕ Not approved</button>'
       +'<button class="apv-ok" onclick="ovApprove(\''+s.code+'\','+i+')">✓ Approve</button></div>'
       :'<div class="ov-blk" style="margin-top:9px">Awaiting cluster manager '+esc(s.region)+'.</div>')
     +'</div>';
@@ -3787,15 +3839,26 @@ function ovApprovals(){
 }
 
 function ovPills(){
+  if(OVROLE==="dept"){
+    const lab=OVDEPT==="guard"?"Security guards":"Daily wagers";
+    return '<div class="ov-pills">'
+      +'<button class="ov-pill'+(OVMOD==="shift_"+OVDEPT?" on":"")+'" onclick="ovSetMod(\'shift_'+OVDEPT+'\')">'+lab+' report</button>'
+      +'<button class="ov-pill'+(OVMOD==="performance"?" on":"")+'" onclick="ovSetMod(\'performance\')">Staff rating</button></div>';
+  }
   return '<div class="ov-pills">'+'<button class="ov-pill" onclick="ovSetMod(\'home\')">‹ Home</button>'+OV_LENSES.map(l=>{ let n="";
      if(l[0]==="approvals"){ const c=ovTableStores().reduce((a,s)=>a+((OVS.data[s.code]||{}).amendments||[]).length,0); if(c) n=' <b>'+c+'</b>'; }
      return '<button class="ov-pill'+(OVMOD===l[0]?" on":"")+'" onclick="ovSetMod(\''+l[0]+'\')">'+esc(l[1])+n+'</button>'; }).join("")+'</div>';
 }
-function ovRegionBar(){ if(OVROLE!=="hq") return "";
-  const regs=[...new Set(OVS.stores.map(s=>s.region))];
+function ovRegionBar(){ if(OVROLE!=="hq"&&OVROLE!=="regional") return "";   /* regional filters within their own clusters */
+  const regs=[...new Set(ovScopeStores().map(s=>s.region))];
   return '<div class="ov-regbar">Cluster manager: <select onchange="ovSetReg(this.value)"><option value="">All cluster managers</option>'
     +regs.map(r=>'<option value="'+esc(r)+'"'+(OVREGFILTER===r?" selected":"")+'>'+esc(r)+'</option>').join("")+'</select></div>'; }
-function ovSetMod(m){ OVMOD=m; ovRender(); }
+function ovDeptMods(){ return ["shift_"+OVDEPT,"performance"]; }
+function ovSetMod(m){
+  if(OVROLE==="dept"){ if(m==="home") m="shift_"+OVDEPT;
+    if(ovDeptMods().indexOf(m)<0) return; }   /* departments cannot open other reports */
+  OVMOD=m; ovRender(); }
+function ovSetHomeDay(d){ OVDAYPICK=(d===OVS.today?null:d); ovBuild(); ovRender(); }
 function ovSetReg(r){ OVREGFILTER=r; ovRender(); }
 
 /* ---- guided home: store list + summary strip + report doors ---- */
@@ -3815,10 +3878,607 @@ function ovHomeBadges(code){
   if(!out.length) out.push('<span class="ovh-b grey">on track</span>');
   return out.join("");
 }
+/* ============ SALE-DAY PREPARATION (filed evening before; cluster approves / sends back) ============ */
+const PREP_GROUPS_OV=[["ho","Head office staff"],["jan","Janitorial staff"],["guard","Security guards"],["sale","Sale staff"],["supp","Supporting managers"]];
+function prepFlags(d){
+  const a=(d&&d.answers)||{}; const f=[];
+  if(a.Nos==="No") f.push("NOS not sealed");
+  if(a.Sign==="No") f.push("Discount signages missing");
+  if(a.Wasnow==="No") f.push("Was/Now not pasted");
+  if(a.Change==="No") f.push("Change not arranged");
+  PREP_GROUPS_OV.forEach(g=>{ if(a["Inf_"+g[0]]==="No") f.push(g[1]+" NOT informed"); });
+  if(a.Outside==="No") f.push("Outside store not clean");
+  if(a.Stock==="No") f.push("Stockroom not done");
+  const t=Number(a.FrTot||0),o=Number(a.FrOk||0);
+  if(t&&o<t) f.push((t-o)+" fitting room"+(t-o>1?"s":"")+" down ("+(a.FrReason||"no reason")+")");
+  if(a.Floor==="No") f.push("Floor NOT filled per DDAR");
+  if(a.Unst==="No") f.push("Unstitched not changed per DDAR");
+  if(a.Stit==="No") f.push("Stitched not changed per DDAR");
+  if(a.Backup==="No") f.push("Unstitched BACK-UP not aligned");
+  if(d&&d.backupLate&&a.Backup) f.push("⏰ Back-up answered after 11:59 PM");
+  if(a.Rack==="Yes"&&a.RackApp!=="Yes") f.push("EMPTY unstitched rack WITHOUT cluster approval ("+(a.RackReason||"no reason")+")");
+  else if(a.Rack==="Yes") f.push("Empty unstitched rack (approved: "+(a.RackReason||"")+")");
+  /* TO lifecycle: needed → generated? → details + movement (Packed / Awaiting collection /
+     Dispatched; system update asked only once dispatched) OR priority email + follow-up */
+  prepToList(a).forEach(t=>{
+    const base="TO"+(t.num?" "+t.num:" #"+t.i)+" → "+(t.dest||"?")+" · "+(t.units||"?")+" units · PKR "+(t.value?fmt(Number(t.value)):"?");
+    /* movement (physical) — tracked regardless of system generation */
+    if(!t.move) f.push(base+" — movement status MISSING");
+    else if(t.move!=="Dispatched") f.push(base+" · "+t.move.toUpperCase()+" — not yet dispatched");
+    else if(t.gen==="Yes"&&t.sys!=="Yes") f.push(base+" · DISPATCHED but NOT updated in system");
+    /* system generation — the separate, final question */
+    if(t.gen!=="Yes"){
+      if(t.move==="Dispatched") f.push(base+" · DISPATCHED WITHOUT a system TO — generate immediately");
+      if(t.email==="Yes") f.push("TO #"+t.i+" NOT systematically generated — priority email routed, AWAITING TO NUMBER");
+      else f.push("TO #"+t.i+" NOT systematically generated AND priority email NOT routed");
+    }
+  });
+  return f;
+}
+/* every TO on a prep record (new 3-block schema, with legacy single-TO fallback) */
+function prepToList(a){
+  if((a.ToNeeded||a.To)!=="Yes") return [];
+  const out=[];
+  for(let i=1;i<=3;i++){
+    if(a["ToGen"+i]||a["ToDest"+i]||a["ToNum"+i]) out.push({i:i,gen:a["ToGen"+i]||"",num:a["ToNum"+i]||"",dest:a["ToDest"+i]||"",
+      units:a["ToUnits"+i]||"",value:a["ToValue"+i]||"",move:a["ToMove"+i]||"",sys:a["ToSys"+i]||"",email:a["ToEmail"+i]||""});
+  }
+  if(!out.length&&(a.ToGenerated||a.ToNum||a.ToEmail))   /* legacy records */
+    out.push({i:1,gen:a.ToGenerated||(a.ToNum?"Yes":""),num:a.ToNum||"",dest:"",units:"",value:"",
+      move:a.ToStatus==="Dispatched"?"Dispatched":(a.ToStatus||""),sys:a.ToSys||"",email:a.ToEmail||""});
+  return out;
+}
+function ovPrepToLine(a){
+  const list=prepToList(a); if(!list.length) return "";
+  return '<div class="ov-l"><b>Transfer outs:</b> '+list.map(t=>
+    (t.gen==="Yes"?esc(t.num||"?"):"no system TO")+" → "+esc((t.dest||"?").split(",")[0])+" · "+esc(t.units||"?")+"u · PKR "+(t.value?fmt(Number(t.value)):"?")+" · "+esc(t.move||"no status")
+    +(t.move==="Dispatched"&&t.gen==="Yes"?(t.sys==="Yes"?" ✓ in system":" ✗ not in system"):"")
+    +(t.gen!=="Yes"?" ("+(t.email==="Yes"?"email routed, awaiting number":"EMAIL NOT ROUTED")+")":"")).join(" | ")+'</div>';
+}
+function prepStatusChip(d){
+  if(!d) return '<span class="ovh-b red">not filed</span>';
+  const s=d.prepStatus||"submitted";
+  if(s==="approved") return '<span class="ovh-b green">✓ approved</span>';
+  if(s==="sentback") return '<span class="ovh-b red">↩ sent back</span>';
+  return '<span class="ovh-b amber">awaiting review</span>';
+}
+/* ---- the ACTUAL filled answers, as [section, question, answer, isBad] rows ----
+   one engine feeds the on-screen detail AND the full-answers CSV */
+function ovPrepAnswerRows(d){
+  const a=(d&&d.answers)||{}; const R=[];
+  const yn=(sec,q,v,badWhen)=>R.push([sec,q,v||"—",v===(badWhen===undefined?"No":badWhen)]);
+  yn("A · Merchandise & signage","All NOS verified, acknowledged & sealed",a.Nos);
+  yn("A · Merchandise & signage","All correct discount signages up",a.Sign);
+  yn("A · Merchandise & signage","“Was / Now” pasted clearly on women's unstitched",a.Wasnow);
+  yn("A · Merchandise & signage","Change arranged & aligned",a.Change);
+  PREP_GROUPS_OV.forEach(g=>{
+    const slots=[];
+    if(a["Cnt_"+g[0]]) slots.push(a["Cnt_"+g[0]]+" @ "+(a["Time_"+g[0]]?fmt12(a["Time_"+g[0]]):"?"));
+    for(let i=1;i<=3;i++){ if(a["Cnt"+i+"_"+g[0]]) slots.push(a["Cnt"+i+"_"+g[0]]+" @ "+(a["Time"+i+"_"+g[0]]?fmt12(a["Time"+i+"_"+g[0]]):"?")); }
+    R.push(["B · Staffing",g[1]+" — informed of tomorrow's timings",
+      (a["Inf_"+g[0]]||"—")+(a["Inf_"+g[0]]==="Yes"&&slots.length?" · "+slots.join(" + "):""),a["Inf_"+g[0]]==="No"]);
+  });
+  R.push(["B · Staffing","Morning manager — opening",(a.MgrName||"—")+(a.MgrTime?" @ "+fmt12(a.MgrTime):""),!a.MgrName]);
+  yn("C · Housekeeping","Outside store clean",a.Outside);
+  yn("C · Housekeeping","Stockroom rearranged & cleaned",a.Stock);
+  const t=Number(a.FrTot||0),o=Number(a.FrOk||0);
+  R.push(["C · Housekeeping","Fitting rooms — operational / total",(a.FrOk||"?")+" of "+(a.FrTot||"?")+(t&&o<t?" · "+(a.FrReason||"no reason"):""),t>0&&o<t]);
+  yn("D · Floor & stock (DDAR)","Floor filled as per DDAR",a.Floor);
+  yn("D · Floor & stock (DDAR)","Unstitched designs changed per DDAR",a.Unst);
+  yn("D · Floor & stock (DDAR)","Stitched designs changed per DDAR",a.Stit);
+  R.push(["D · Floor & stock (DDAR)","Unstitched BACK-UP aligned fully",(a.Backup||"—")+(d&&d.backupLate?" · ⏰ answered after 11:59 PM":""),a.Backup==="No"]);
+  R.push(["D · Floor & stock (DDAR)","Empty unstitched rack on the floor",
+    a.Rack==="Yes"?("Yes · "+(a.RackReason||"no reason")+" · cluster approved: "+(a.RackApp||"—")):(a.Rack||"—"),a.Rack==="Yes"&&a.RackApp!=="Yes"]);
+  const tos=prepToList(a);
+  if((a.ToNeeded||a.To)!=="Yes") R.push(["E · Transfer outs","Any transfer out requested",(a.ToNeeded||a.To||"—"),false]);
+  else if(!tos.length) R.push(["E · Transfer outs","Any transfer out requested","Yes — no detail filled",true]);
+  else tos.forEach(tt=>{
+    R.push(["E · Transfer outs","Transfer out #"+tt.i+" — "+(tt.gen==="Yes"?("TO "+(tt.num||"?")):"NO system TO yet"),
+      "→ "+(tt.dest||"?")+" · "+(tt.units||"?")+" units · PKR "+(tt.value?fmt(Number(tt.value)):"?")+" · "+(tt.move||"no status")
+      +(tt.move==="Dispatched"?(tt.gen==="Yes"?(tt.sys==="Yes"?" · in system ✓":" · NOT in system"):" · NO SYSTEM TO"):"")
+      +(tt.gen!=="Yes"?" · priority email "+(tt.email==="Yes"?"routed":"NOT routed"):""),
+      (tt.move==="Dispatched"&&(tt.gen!=="Yes"||tt.sys!=="Yes"))||(tt.gen!=="Yes"&&tt.email!=="Yes")]);
+  });
+  if(a.Notes) R.push(["Notes","Store's note",a.Notes,false]);
+  return R;
+}
+function ovPrepDetailHTML(d){
+  if(!d) return "";
+  const rows=ovPrepAnswerRows(d); let cur="",h="";
+  rows.forEach(r=>{
+    if(r[0]!==cur){ cur=r[0]; h+='<div style="font-weight:800;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:#4b5563;margin:9px 0 3px">'+esc(cur)+'</div>'; }
+    h+='<div style="display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:2.5px 0;border-bottom:1px dotted #e5e7eb"><span style="color:#555">'+esc(r[1])+'</span><b style="text-align:right;color:'+(r[3]?'#B3261E':'#1b1f27')+'">'+esc(r[2])+'</b></div>';
+  });
+  return h;
+}
+function ovPrepDay(){ return (OVPREPDAY!=null)?OVPREPDAY:Math.min(OVS.today+1,5); }  /* default: TOMORROW */
+let OVPREPEXP={};
+function ovPrepToggle(code){ OVPREPEXP[code]=!OVPREPEXP[code]; ovRender(); }
+function ovSetPrepDay(d){ OVPREPDAY=d; OVPREPEXP={}; ovRender(); }
+function ovPrepFullCsv(){
+  const dy=ovPrepDay();
+  const rows=[["Store","Cluster manager","Prep for day","Status","Filed late","Section","Question","Answer","Needs attention"]];
+  ovTableStores().forEach(s=>{ const d=(OVS.prep5[s.code]||{})[dy];
+    if(!d){ rows.push([s.name,s.region,"Day "+dy,"NOT FILED","","","","",""]); return; }
+    ovPrepAnswerRows(d).forEach(r=>rows.push([s.name,s.region,"Day "+dy,d.prepStatus||"submitted",d.filedLate?"YES":"",r[0],r[1],r[2],r[3]?"YES":""])); });
+  downloadCsv("sale-prep-FULL-answers-day"+dy+".csv",rows);
+}
+
+/* ==================== POST-SALE WIND-DOWN (oversight) ==================== */
+const POST_GROUPS_OV=[["sale","Sale staff"],["guard","Security guards"],["jan","Janitorial staff"]];
+let OVPOSTEXP={};
+function ovPostToggle(code){ OVPOSTEXP[code]=!OVPOSTEXP[code]; ovRender(); }
+function postFlags(d){
+  const a=(d&&d.answers)||{}; const f=[];
+  const pend=Number(d&&d.pendingAmount||0);
+  if(pend>0) f.push("PKR "+fmt(pend)+" recovery STILL PENDING from staff");
+  if(a.Sign==="No") f.push("Sale signages not corrected");
+  if(a.Counter==="No") f.push("Cash counter not clear");
+  if(a.Floor==="No") f.push("Floor NOT set back to normal");
+  if(a.Clean==="No") f.push("Cleaning & clearance not done");
+  if(a.Tills==="No") f.push("Extra tills / queue poles not stored");
+  const t=Number(a.FrTot||0),o=Number(a.FrOk||0);
+  if(t&&o<t) f.push((t-o)+" fitting room"+(t-o>1?"s":"")+" down ("+(a.FrReason||"no reason")+")");
+  (d&&d.openIncidentRefs||[]).forEach((ref,i)=>{
+    if(a["Inc_"+i]==="Still pending") f.push("Incident "+ref+" follow-up STILL PENDING ("+(a["IncNote_"+i]||"")+")");
+  });
+  if(a.Rack==="Still on the floor"){
+    if(a.RackApp!=="Yes") f.push((a.RackCount||"?")+" empty rack(s) STILL on floor WITHOUT cluster approval");
+    else f.push((a.RackCount||"?")+" empty rack(s) still on floor (approved)");
+  }
+  POST_GROUPS_OV.forEach(g=>{ if(a["Inf_"+g[0]]==="No") f.push(g[1]+" NOT informed for next day"); });
+  /* fake notes */
+  const fnPend=Number(d&&d.fnTillPending||0);
+  if(fnPend>0) f.push("Fake notes: PKR "+fmt(fnPend)+" NOT yet recovered from the accepting staff ("+((a.FnPlan)||"no plan")+")");
+  if(Number(d&&d.fnBankCount||0)>0&&!a.FnBank) f.push("Bank-found fake notes: treatment NOT stated");
+  if(a.FnBank==="Under investigation with the bank") f.push("Bank-found fake notes UNDER INVESTIGATION ("+(a.FnBankRef||"no ref")+")");
+  /* float return */
+  if(d&&d.floatSent!=null&&a.FloatGot!==""&&Number(a.FloatGot||0)!==Number(d.floatSent))
+    f.push("FLOAT MISMATCH: HO sent PKR "+fmt(Number(d.floatSent))+" but store says PKR "+fmt(Number(a.FloatGot||0))+" ("+(a.FloatWhy||"no reason")+")");
+  if(a.FloatDep==="Not yet") f.push("FLOAT NOT DEPOSITED BACK yet ("+(a.FloatWhen||"no date")+")");
+  return f;
+}
+function postAnswerRows(d){
+  const a=(d&&d.answers)||{}; const R=[];
+  R.push(["A · Cash recovery","Recoverable (from cashier records)","PKR "+fmt(Number(d&&d.recoverable||0)),false]);
+  R.push(["A · Cash recovery","Recovered from staff","PKR "+fmt(Number(a.Recovered||0)),false]);
+  const pend=Number(d&&d.pendingAmount||0);
+  R.push(["A · Cash recovery","Still pending","PKR "+fmt(pend),pend>0]);
+  for(let i=1;i<=5;i++){ if(a["Pn"+i]) R.push(["A · Cash recovery","Pending — "+a["Pn"+i]+" ("+(a["Pp"+i]||"")+")","PKR "+fmt(Number(a["Pa"+i]||0))+" · "+(a["Pd"+i]||""),true]); }
+  [["Sign","Sale signages corrected / removed"],["Counter","Cash counter clean and clear"],["Floor","Floor set back to normal"],["Clean","Outside, inside & stockroom cleaning done"],["Tills","Extra tills & queue poles packed and stored"]]
+    .forEach(q=>R.push(["B · Back to normal",q[1],a[q[0]]||"—",a[q[0]]==="No"]));
+  const t=Number(a.FrTot||0),o=Number(a.FrOk||0);
+  R.push(["C · Fitting rooms","Operational / total",(a.FrOk||"?")+" of "+(a.FrTot||"?")+(t&&o<t?" · "+(a.FrReason||"no reason"):""),t>0&&o<t]);
+  (d&&d.openIncidentRefs||[]).forEach((ref,i)=>{
+    R.push(["D · Incidents",ref+" follow-up",(a["Inc_"+i]||"—")+(a["Inc_"+i]==="Still pending"?" · "+(a["IncNote_"+i]||""):""),a["Inc_"+i]!=="Closed"]);
+  });
+  R.push(["D · Racks","Empty unstitched racks",
+    a.Rack==="Still on the floor"?("Still on floor · "+(a.RackCount||"?")+" · cluster approved: "+(a.RackApp||"—")):(a.Rack||"—"),
+    a.Rack==="Still on the floor"&&a.RackApp!=="Yes"]);
+  const fnT=Number(d&&d.fnTillTotal||0), fnP=Number(d&&d.fnTillPending||0);
+  if(fnT>0){
+    R.push(["A2 · Fake notes","Till-caught (tagged to staff)","PKR "+fmt(fnT),false]);
+    R.push(["A2 · Fake notes","Recovered from staff","PKR "+fmt(Number(a.FnRecovered||0)),false]);
+    R.push(["A2 · Fake notes","Still pending","PKR "+fmt(fnP)+(fnP>0?" · "+(a.FnPlan||"no plan"):""),fnP>0]);
+  }
+  if(Number(d&&d.fnBankCount||0)>0)
+    R.push(["A2 · Fake notes","Bank-found ("+d.fnBankCount+" notes · PKR "+fmt(Number(d.fnBankValue||0))+") — treatment",(a.FnBank||"—")+(a.FnBankRef?" · "+a.FnBankRef:""),!a.FnBank]);
+  R.push(["F · Float return","HO transferred (record)",d&&d.floatSent!=null?"PKR "+fmt(Number(d.floatSent)):"no float on record",false]);
+  R.push(["F · Float return","Store received",(a.FloatGot!==""&&a.FloatGot!=null?"PKR "+fmt(Number(a.FloatGot)):"—")+(a.FloatWhy?" · "+a.FloatWhy:""),d&&d.floatSent!=null&&Number(a.FloatGot||0)!==Number(d.floatSent)]);
+  R.push(["F · Float return","Deposited back",
+    a.FloatDep==="Yes"?("Yes · "+(a.FloatBank||"?")+" · slip "+(a.FloatSlip||"?")+" · "+(a.FloatE1||"?")+(a.FloatE2?" + "+a.FloatE2:"")):
+    (a.FloatDep==="Not yet"?("NOT YET · "+(a.FloatWhen||"")):(a.FloatDep||"—")),a.FloatDep!=="Yes"]);
+  POST_GROUPS_OV.forEach(g=>{
+    const slots=[]; for(let i=1;i<=2;i++){ if(a["Cnt"+i+"_"+g[0]]) slots.push(a["Cnt"+i+"_"+g[0]]+" @ "+(a["Time"+i+"_"+g[0]]?fmt12(a["Time"+i+"_"+g[0]]):"?")); }
+    R.push(["E · Next day",g[1]+" — informed",(a["Inf_"+g[0]]||"—")+(slots.length?" · "+slots.join(" + "):""),a["Inf_"+g[0]]==="No"]);
+  });
+  R.push(["E · Next day","Store manager — opening",(a.MgrName||"—")+(a.MgrTime?" @ "+fmt12(a.MgrTime):""),!a.MgrName]);
+  if(a.Notes) R.push(["Notes","Store's note",a.Notes,false]);
+  return R;
+}
+function postDetailHTML(d){
+  if(!d) return ""; let cur="",h="";
+  postAnswerRows(d).forEach(r=>{
+    if(r[0]!==cur){ cur=r[0]; h+='<div style="font-weight:800;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:#4b5563;margin:9px 0 3px">'+esc(cur)+'</div>'; }
+    h+='<div style="display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:2.5px 0;border-bottom:1px dotted #e5e7eb"><span style="color:#555">'+esc(r[1])+'</span><b style="text-align:right;color:'+(r[3]?'#B3261E':'#1b1f27')+'">'+esc(r[2])+'</b></div>';
+  });
+  return h;
+}
+function ovPostCard(code){
+  if(OVS.today<5&&!OVS.postAll[code]) return "";
+  const d=OVS.postAll[code]; const can=ovCanAct(code);
+  let body;
+  if(!d) body='<div class="ov-blk">No post-sale confirmation filed yet.</div>';
+  else{
+    const fl=postFlags(d);
+    body=(d.filedLate?'<div class="ov-echip" style="margin-bottom:6px">⏰ Filed late</div>':'')
+      +'<div class="ov-l"><b>Recovered PKR '+fmt(Number((d.answers||{}).Recovered||0))+'</b> of PKR '+fmt(Number(d.recoverable||0))+(Number(d.pendingAmount||0)>0?' · <b style="color:#B3261E">PKR '+fmt(Number(d.pendingAmount))+' pending</b>':' · all clear ✓')+'</div>'
+      +(fl.length?'<div class="ov-exc" style="margin-top:6px">'+fl.map(x=>'<span class="ov-echip">⚑ '+esc(x)+'</span>').join("")+'</div>'
+                 :'<div class="ov-l" style="color:#1B6B4A;font-weight:600">All wind-down items in order.</div>')
+      +'<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;color:#1f4e8c;font-size:13px">📋 Show the FULL filled confirmation — every answer</summary>'
+      +'<div style="padding:6px 2px 0">'+postDetailHTML(d)+'</div></details>'
+      +(d.prepStatus==="approved"?'<div class="ov-l" style="color:#1B6B4A;font-weight:700;margin-top:6px">✓ Approved by '+esc(d.prepBy||"")+' · '+esc(d.prepAt||"")+'</div>':"")
+      +(d.prepStatus==="sentback"?'<div class="ov-l" style="color:#B3261E;font-weight:700;margin-top:6px">↩ Sent back by '+esc(d.prepBy||"")+': '+esc(d.prepRemarks||"")+'</div>':"")
+      +((can&&d.prepStatus!=="approved")?
+        '<div style="margin-top:9px"><span class="lab">Remarks to the store <small style="color:#8A5A00">(required to send back)</small></span>'
+        +'<input type="text" id="postRem-'+code.replace(/[^A-Za-z0-9]/g,"_")+'" maxlength="300" placeholder="e.g. Recover the pending 500 from Waqar before Friday and resubmit" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d5d9e0;border-radius:8px;font:inherit;margin-top:3px">'
+        +'<div class="apv-acts"><button class="apv-no" onclick="ovPostReview(\''+code+'\',\'sendback\')">↩ Send back</button>'
+        +'<button class="apv-ok" onclick="ovPostReview(\''+code+'\',\'approve\')">✓ Wind-down approved</button></div></div>':"");
+  }
+  return '<div class="card"><div class="card-head"><h3>🌇 Post-sale wind-down</h3>'+prepStatusChip(d)+'</div><div class="card-body">'+body+'</div></div>';
+}
+async function ovPostReview(code,decision){
+  const el=document.getElementById("postRem-"+code.replace(/[^A-Za-z0-9]/g,"_"));
+  const remarks=el?el.value.trim():"";
+  if(decision==="sendback"&&!remarks){ toast("Add remarks — say what the store must fix."); if(el)el.focus(); return; }
+  try{
+    const res=await fetch(CONFIG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body:JSON.stringify({action:"post-review",code:ACCESS_CODE,store:code,event:OVS.event,decision:decision,remarks:remarks})});
+    const o=await res.json();
+    if(!o.ok){ toast(o.error||"Could not save."); return; }
+    toast(decision==="approve"?"Wind-down approved — store closed out.":"Sent back — the store sees your remarks.");
+    ovRefresh();
+  }catch(e){ toast("No connection — not saved."); }
+}
+function ovPostStrip(){
+  if(OVS.today<5) return "";
+  const stores=ovTableStores();
+  let filed=0,app=0,sb=0,pendAmt=0;
+  stores.forEach(s=>{ const d=OVS.postAll[s.code]; if(!d) return; filed++;
+    if(d.prepStatus==="approved")app++; else if(d.prepStatus==="sentback")sb++;
+    pendAmt+=Number(d.pendingAmount||0); });
+  const missing=stores.length-filed;
+  return '<div class="ovh-sechead">🌇 Post-sale wind-down — final confirmations</div>'
+    +'<div class="ov-strip" style="cursor:pointer" onclick="ovSetMod(\'postlens\')">'
+    +'<div class="ov-stat'+(missing?' bad':' good')+'"><b>'+filed+'/'+stores.length+'</b><span>filed</span></div>'
+    +'<div class="ov-stat good"><b>'+app+'</b><span>approved</span></div>'
+    +'<div class="ov-stat'+(sb?' bad':'')+'"><b>'+sb+'</b><span>sent back</span></div>'
+    +'<div class="ov-stat'+(pendAmt?' bad':'')+'"><b>'+(pendAmt?fmt(pendAmt):'0')+'</b><span>PKR recovery pending</span></div>'
+    +'<div class="ov-stat'+(missing?' warn':'')+'"><b>'+missing+'</b><span>not filed</span></div></div>';
+}
+function ovPostReport(){
+  const stores=ovTableStores();
+  const list=stores.map(s=>({s:s,d:OVS.postAll[s.code]}))
+    .sort((a,b)=>{ const r=x=>!x.d?0:x.d.prepStatus==="sentback"?1:Number(x.d.pendingAmount||0)>0?2:x.d.prepStatus==="submitted"?3:4; return r(a)-r(b)||a.s.name.localeCompare(b.s.name); });
+  const trs=list.map(o=>{ const fl=o.d?postFlags(o.d):[];
+    const open=OVPOSTEXP[o.s.code];
+    let tr='<tr onclick="ovPostToggle(\''+o.s.code+'\')"><td class="stk">'+esc(o.s.name)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td><td class="muted">'+esc(o.s.region)+'</td>'
+      +'<td>'+prepStatusChip(o.d)+(o.d&&o.d.filedLate?' <span class="ov-echip">⏰</span>':'')+'</td>'
+      +'<td class="'+(o.d&&Number(o.d.pendingAmount||0)>0?'cell-bad':'muted')+'">'+(o.d?(Number(o.d.pendingAmount||0)?("PKR "+fmt(Number(o.d.pendingAmount))):"0"):"·")+'</td>'
+      +'<td style="text-align:left">'+(fl.length?fl.slice(0,3).map(x=>'⚑ '+esc(x)).join("<br>")+(fl.length>3?"<br>+"+(fl.length-3)+" more…":""):(o.d?'<span style="color:#1B6B4A">all in order</span>':'—'))+'</td>'
+      +'<td class="muted">'+(o.d&&o.d.prepBy?esc(o.d.prepBy):'—')+'</td></tr>';
+    if(open) tr+='<tr class="ov-sub"><td colspan="6" style="background:#f7f8fa;padding:10px 14px;text-align:left">'
+      +(o.d?postDetailHTML(o.d):'<span class="meta">Nothing filed yet.</span>')
+      +'<div style="margin-top:8px"><a style="color:#1f4e8c;cursor:pointer;font-weight:600" onclick="event.stopPropagation();ovOpen(\''+o.s.code+'\')">Open the store — review &amp; approve / send back ›</a></div></td></tr>';
+    return tr; }).join("");
+  return '<div class="ov-cashbar"><div><b>🌇 Post-sale wind-down</b> · '+(OVREGFILTER||OVREGION||"all stores")+'</div><div style="display:flex;gap:6px"><button class="btn btn-line btn-sm" onclick="ovPostCsv()">⬇ Summary CSV</button><button class="btn btn-line btn-sm" onclick="ovPostFullCsv()">⬇ Full answers CSV</button></div></div>'
+    +'<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Store</th><th>Cluster manager</th><th>Status</th><th>Recovery pending</th><th>What needs attention</th><th>Reviewed by</th></tr>'+trs+'</table></div>'
+    +'<p class="meta" style="margin:8px 2px 0">Final confirmation after the last sale day. Pending recovery and sent-back stores float to the top. <b>Tap a store row for every answer as filled.</b></p>';
+}
+function ovPostCsv(){
+  const rows=[["Store","Cluster manager","Status","Filed late","Recoverable PKR","Recovered PKR","Pending PKR","Flags","Detail","Reviewed by","Review remarks"]];
+  ovTableStores().forEach(s=>{ const d=OVS.postAll[s.code]; const fl=d?postFlags(d):[]; const a=(d&&d.answers)||{};
+    rows.push([s.name,s.region,d?(d.prepStatus||"submitted"):"NOT FILED",d&&d.filedLate?"YES":"",d?Number(d.recoverable||0):"",d?Number(a.Recovered||0):"",d?Number(d.pendingAmount||0):"",fl.length,fl.join(" | "),d?(d.prepBy||""):"",d?(d.prepRemarks||""):""]); });
+  downloadCsv("post-sale-winddown.csv",rows);
+}
+function ovPostFullCsv(){
+  const rows=[["Store","Cluster manager","Status","Filed late","Section","Question","Answer","Needs attention"]];
+  ovTableStores().forEach(s=>{ const d=OVS.postAll[s.code];
+    if(!d){ rows.push([s.name,s.region,"NOT FILED","","","","",""]); return; }
+    postAnswerRows(d).forEach(r=>rows.push([s.name,s.region,d.prepStatus||"submitted",d.filedLate?"YES":"",r[0],r[1],r[2],r[3]?"YES":""])); });
+  downloadCsv("post-sale-FULL-answers.csv",rows);
+}
+function ovPrepStaffLine(a){
+  const bits=PREP_GROUPS_OV.map(g=>{
+    if(a["Inf_"+g[0]]!=="Yes") return null;
+    const slots=[];
+    if(a["Cnt_"+g[0]]) slots.push(esc(a["Cnt_"+g[0]])+" @ "+(a["Time_"+g[0]]?fmt12(a["Time_"+g[0]]):"?"));  /* old-schema records */
+    for(let i=1;i<=3;i++){ const c=a["Cnt"+i+"_"+g[0]], tm=a["Time"+i+"_"+g[0]];
+      if(c) slots.push(esc(c)+" @ "+(tm?fmt12(tm):"?")); }
+    return esc(g[1])+" "+(slots.join(" + ")||"?");
+  }).filter(Boolean);
+  if(a.MgrName) bits.unshift("Opening: "+esc(a.MgrName)+" @ "+(a.MgrTime?fmt12(a.MgrTime):"?"));
+  return bits.join(" · ");
+}
+function ovPrepCard(code,dy){
+  const d=(OVS.prep5[code]||{})[dy];
+  const can=ovCanAct(code);
+  let body;
+  if(!d) body='<div class="ov-blk">No preparation checklist filed for Day '+dy+' yet.</div>';
+  else{
+    const fl=prepFlags(d);
+    body=(d.filedLate?'<div class="ov-echip" style="margin-bottom:6px">⏰ Filed late — was due the evening before</div>':'')
+      +'<div class="ov-l">'+ovPrepStaffLine(d.answers||{})+'</div>'
+      +ovPrepToLine(d.answers||{})
+      +(fl.length?'<div class="ov-exc" style="margin-top:6px">'+fl.map(x=>'<span class="ov-echip">⚑ '+esc(x)+'</span>').join("")+'</div>'
+                 :'<div class="ov-l" style="color:#1B6B4A;font-weight:600">All checklist items in order.</div>')
+      +((d.answers&&d.answers.Notes)?'<div class="ov-l">Notes: '+esc(d.answers.Notes)+'</div>':"")
+      +'<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;color:#1f4e8c;font-size:13px">📋 Show the FULL filled checklist — every answer</summary>'
+      +'<div style="padding:6px 2px 0">'+ovPrepDetailHTML(d)+'</div></details>'
+      +(d.prepStatus==="approved"?'<div class="ov-l" style="color:#1B6B4A;font-weight:700;margin-top:6px">✓ Approved by '+esc(d.prepBy||"")+' · '+esc(d.prepAt||"")+'</div>':"")
+      +(d.prepStatus==="sentback"?'<div class="ov-l" style="color:#B3261E;font-weight:700;margin-top:6px">↩ Sent back by '+esc(d.prepBy||"")+': '+esc(d.prepRemarks||"")+'</div>':"")
+      +((can&&d.prepStatus!=="approved")?
+        '<div style="margin-top:9px"><span class="lab">Remarks to the store <small style="color:#8A5A00">(required to send back)</small></span>'
+        +'<input type="text" id="prepRem-'+code.replace(/[^A-Za-z0-9]/g,"_")+'" maxlength="300" placeholder="e.g. Signages on aisle 3 still old — fix and resubmit" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d5d9e0;border-radius:8px;font:inherit;margin-top:3px">'
+        +'<div class="apv-acts"><button class="apv-no" onclick="ovPrepReview(\''+code+'\','+dy+',\'sendback\')">↩ Send back</button>'
+        +'<button class="apv-ok" onclick="ovPrepReview(\''+code+'\','+dy+',\'approve\')">✓ Prep approved</button></div></div>':"");
+  }
+  return '<div class="card"><div class="card-head"><h3>🌙 Preparation for Day '+dy+'</h3>'+prepStatusChip(d)+'</div><div class="card-body">'+body+'</div></div>';
+}
+async function ovPrepReview(code,dy,decision){
+  const el=document.getElementById("prepRem-"+code.replace(/[^A-Za-z0-9]/g,"_"));
+  const remarks=el?el.value.trim():"";
+  if(decision==="sendback"&&!remarks){ toast("Add remarks — say what the store must fix."); if(el)el.focus(); return; }
+  try{
+    const res=await fetch(CONFIG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body:JSON.stringify({action:"prep-review",code:ACCESS_CODE,store:code,event:OVS.event,day:String(dy),decision:decision,remarks:remarks})});
+    const o=await res.json();
+    if(!o.ok){ toast(o.error||"Could not save."); return; }
+    toast(decision==="approve"?"Preparation approved.":"Sent back — the store sees your remarks.");
+    ovRefresh();
+  }catch(e){ toast("No connection — not saved."); }
+}
+function ovPrepStrip(){
+  const tomorrow=OVS.today+1; if(tomorrow>5) return "";
+  const stores=ovTableStores();
+  let filed=0,app=0,sb=0;
+  stores.forEach(s=>{ const d=(OVS.prep5[s.code]||{})[tomorrow]; if(!d) return; filed++;
+    if(d.prepStatus==="approved")app++; else if(d.prepStatus==="sentback")sb++; });
+  const missing=stores.length-filed;
+  return '<div class="ovh-sechead">🌙 Tomorrow\'s preparation — Day '+tomorrow+'</div>'
+    +'<div class="ov-strip" style="cursor:pointer" onclick="ovSetPrepDay('+tomorrow+');ovSetMod(\'prep\')">'
+    +'<div class="ov-stat'+(missing?' bad':' good')+'"><b>'+filed+'/'+stores.length+'</b><span>prep filed</span></div>'
+    +'<div class="ov-stat good"><b>'+app+'</b><span>approved</span></div>'
+    +'<div class="ov-stat'+(sb?' bad':'')+'"><b>'+sb+'</b><span>sent back</span></div>'
+    +'<div class="ov-stat'+(missing?' warn':'')+'"><b>'+missing+'</b><span>not filed</span></div></div>';
+}
+function ovPrepReport(){
+  const dy=ovPrepDay(); const stores=ovTableStores();
+  const btns=[1,2,3,4,5].map(d2=>'<button class="ov-daybtn'+(dy===d2?" on":"")+'"'+(d2>OVS.today+1?' disabled style="opacity:.4"':' onclick="ovSetPrepDay('+d2+')"')+'>Day '+d2+(d2===OVS.today+1?" · tomorrow":"")+'</button>').join("");
+  const list=stores.map(s=>({s:s,d:(OVS.prep5[s.code]||{})[dy]}))
+    .sort((a,b)=>{ const r=x=>!x.d?0:x.d.prepStatus==="sentback"?1:x.d.prepStatus==="submitted"?2:3; return r(a)-r(b)||a.s.name.localeCompare(b.s.name); });
+  const trs=list.map(o=>{ const fl=o.d?prepFlags(o.d):[];
+    const open=OVPREPEXP[o.s.code];
+    let tr='<tr onclick="ovPrepToggle(\''+o.s.code+'\')"><td class="stk">'+esc(o.s.name)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td><td class="muted">'+esc(o.s.region)+'</td>'
+      +'<td>'+prepStatusChip(o.d)+(o.d&&o.d.filedLate?' <span class="ov-echip">⏰</span>':'')+'</td>'
+      +'<td class="'+(fl.length?'cell-warn':'muted')+'">'+(o.d?(fl.length||'—'):'·')+'</td>'
+      +'<td style="text-align:left">'+(fl.length?fl.slice(0,3).map(x=>'⚑ '+esc(x)).join("<br>")+(fl.length>3?"<br>+"+(fl.length-3)+" more…":""):(o.d?'<span style="color:#1B6B4A">all in order</span>':'—'))+'</td>'
+      +'<td class="muted">'+(o.d&&o.d.prepBy?esc(o.d.prepBy):'—')+'</td></tr>';
+    if(open) tr+='<tr class="ov-sub"><td colspan="6" style="background:#f7f8fa;padding:10px 14px;text-align:left">'
+      +(o.d?ovPrepDetailHTML(o.d):'<span class="meta">Nothing filed yet.</span>')
+      +'<div style="margin-top:8px"><a style="color:#1f4e8c;cursor:pointer;font-weight:600" onclick="event.stopPropagation();ovOpen(\''+o.s.code+'\')">Open the store — review &amp; approve / send back ›</a></div></td></tr>';
+    return tr; }).join("");
+  return '<div class="ov-cashbar"><div><b>🌙 Sale-day preparation</b> · '+(OVREGFILTER||OVREGION||"all stores")+'</div><div style="display:flex;gap:6px"><button class="btn btn-line btn-sm" onclick="ovPrepCsv()">⬇ Summary CSV</button><button class="btn btn-line btn-sm" onclick="ovPrepFullCsv()">⬇ Full answers CSV</button></div></div>'
+    +'<div class="ov-daysel">Prepared for: '+btns+'</div>'
+    +'<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Store</th><th>Cluster manager</th><th>Status</th><th>Flags</th><th>What needs attention</th><th>Reviewed by</th></tr>'+trs+'</table></div>'
+    +'<p class="meta" style="margin:8px 2px 0">Filed the evening before, for the next sale day. Not-filed and sent-back stores float to the top. <b>Tap a store row to see EVERY answer as filled</b>; the link inside opens the store to approve / send back.</p>';
+}
+function ovPrepCsv(){
+  const dy=ovPrepDay();
+  const rows=[["Store","Cluster manager","Prep for day","Status","Filed late","Flags","Detail","Morning manager","Opening at","Reviewed by","Review remarks"]];
+  ovTableStores().forEach(s=>{ const d=(OVS.prep5[s.code]||{})[dy]; const fl=d?prepFlags(d):[]; const a=(d&&d.answers)||{};
+    rows.push([s.name,s.region,"Day "+dy,d?(d.prepStatus||"submitted"):"NOT FILED",d&&d.filedLate?"YES":"",fl.length,fl.join(" | "),a.MgrName||"",a.MgrTime?fmt12(a.MgrTime):"",d?(d.prepBy||""):"",d?(d.prepRemarks||""):""]); });
+  downloadCsv("sale-prep-day"+dy+".csv",rows);
+}
+
+/* ============ HO v2: compliance % engine + single-page national dashboard ============ */
+function ovDepositDue(dy){ const ev=CONFIG.EVENTS[0]||{days:[]}; const d=(ev.days||[]).find(x=>String(x.day)===String(dy));
+  return !!(d&&d.date&&OVS.businessDate&&d.date<OVS.businessDate); }   /* deposit is due the NEXT morning */
+function ovReqMods(dy){ return OV_MODS.map(m=>m[0]).filter(k=>k!=="deposit"||ovDepositDue(dy)); }
+function ovCompliance(code,dy){
+  const filed=((OVS.filed5[code]||{})[dy])||[]; const req=ovReqMods(dy);
+  const have=req.filter(k=>filed.indexOf(k)>-1), missing=req.filter(k=>filed.indexOf(k)<0);
+  return {filed:have.length,req:req.length,pct:req.length?Math.round(have.length/req.length*100):0,missing:missing,
+          depFiled:filed.indexOf("deposit")>-1};
+}
+function ovPctBadge(pct){ const c=pct>=90?["#E7F3EC","#1B6B4A"]:pct>=70?["#FDF3E2","#8A5A00"]:["#FBEAE9","#B3261E"];
+  return '<span style="background:'+c[0]+';color:'+c[1]+';padding:2px 10px;border-radius:8px;font-weight:800">'+pct+'%</span>'; }
+function ovNetFmt(n){ return n===0?'<span style="color:#6b7280">0</span>'
+  :'<span style="color:'+(n<0?'#B3261E':'#1B6B4A')+';font-weight:700">'+(n>0?'+':'−')+pkr(Math.abs(n))+'</span>'; }
+function ovDayIncidents(dy){ const ev=CONFIG.EVENTS[0]||{days:[]}; const d=(ev.days||[]).find(x=>String(x.day)===String(dy));
+  const codes=ovTableStores().map(s=>s.code);
+  return (OVS.incidents||[]).filter(i=>codes.indexOf(i.code)>-1 && (!d||!d.date||!i.date||i.date===d.date)); }
+function ovNationalStrip(){
+  const stores=ovTableStores(), dy=OVS.day;
+  let pctSum=0,full=0,signed=0,net=0,banked=0;
+  stores.forEach(s=>{ const c=ovCompliance(s.code,dy); pctSum+=c.pct; if(c.pct===100)full++;
+    if(((OVS.signed5[s.code]||{})[String(dy)])) signed++;
+    net+=((OVS.net5[s.code]||{})[dy])||0;
+    const dp=(OVS.deposit5[s.code]||{})[dy]; if(dp&&dp.status==="banked")banked++; });
+  const avg=stores.length?Math.round(pctSum/stores.length):0;
+  const inc=ovDayIncidents(dy), hot=inc.filter(i=>i.prio||i.ongoing).length;
+  return '<div class="ov-strip">'
+    +'<div class="ov-stat'+(avg>=90?" good":avg<70?" bad":" warn")+'"><b>'+avg+'%</b><span>avg compliance</span></div>'
+    +'<div class="ov-stat"><b>'+full+'/'+stores.length+'</b><span>fully filed</span></div>'
+    +'<div class="ov-stat'+(signed===stores.length&&stores.length?" good":"")+'"><b>'+signed+'/'+stores.length+'</b><span>signed off</span></div>'
+    +'<div class="ov-stat'+(net<0?" bad":net>0?" good":"")+'"><b>'+(net===0?"0":(net>0?"+":"−")+fmt(Math.abs(net)))+'</b><span>net impact PKR</span></div>'
+    +'<div class="ov-stat'+(hot?" bad":inc.length?" warn":"")+'"><b>'+inc.length+'</b><span>incidents'+(hot?" · "+hot+" hot":"")+'</span></div>'
+    +'<div class="ov-stat'+(banked<stores.length&&ovDepositDue(dy)?" warn":"")+'"><b>'+banked+'/'+stores.length+'</b><span>deposits banked</span></div>'
+    +'</div>';
+}
+function ovAttention(){
+  const stores=ovTableStores(), dy=OVS.day;
+  let apr=0,ovd=0,stale=0; const low=[];
+  stores.forEach(s=>{ apr+=((OVS.data[s.code]||{}).amendments||[]).length;
+    for(let d2=1;d2<=5;d2++){ const dp=(OVS.deposit5[s.code]||{})[d2]; if(dp&&dp.status==="overdue")ovd++; }
+    if(ovCompliance(s.code,dy).pct<60) low.push(s); stale+=ovStaleCount(s.code); });
+  const ongo=(OVS.incidents||[]).filter(i=>i.ongoing&&stores.some(s=>s.code===i.code)).length;
+  const mk=(cls,txt,act)=>'<button class="ovh-b '+cls+'" style="border:0;cursor:pointer;font:inherit" onclick="'+act+'">'+txt+'</button>';
+  const chips=[];
+  if(apr) chips.push(mk("red",apr+" approval"+(apr>1?"s":"")+" waiting →","ovSetMod('approvals')"));
+  if(ongo) chips.push(mk("red",ongo+" outage"+(ongo>1?"s":"")+" ongoing →","ovSetMod('incidents')"));
+  if(ovd) chips.push(mk("red",ovd+" deposit"+(ovd>1?"s":"")+" overdue →","ovSetMod('deposit')"));
+  if(low.length) chips.push(mk("red",low.length+" store"+(low.length>1?"s":"")+" below 60% →","document.getElementById('ovRank').scrollIntoView({behavior:'smooth'})"));
+  if(stale) chips.push(mk("amber",stale+" stale entr"+(stale>1?"ies":"y")+" (24h+) →","ovSetMod('overview')"));
+  if(!chips.length) return '<div class="card"><div class="card-body"><span style="color:#1B6B4A;font-weight:700">✓ Nothing needs attention right now.</span></div></div>';
+  return '<div class="card"><div class="card-head"><h3>⚠ Needs attention</h3><span class="hint">tap a chip to go there</span></div>'
+    +'<div class="card-body"><div class="ovh-badges" style="justify-content:flex-start">'+chips.join(" ")+'</div></div></div>';
+}
+function ovClToggle(mgr){ OVCLEXP[mgr]=!OVCLEXP[mgr]; ovRender(); }
+function ovClusterScore(){
+  const stores=ovTableStores(), dy=OVS.day, byMgr={};
+  stores.forEach(s=>{ (byMgr[s.region]=byMgr[s.region]||[]).push(s); });
+  const rows=Object.keys(byMgr).map(mgr=>{
+    const list=byMgr[mgr]; let pctSum=0,signed=0,net=0,apr=0;
+    list.forEach(s=>{ pctSum+=ovCompliance(s.code,dy).pct;
+      if((OVS.signed5[s.code]||{})[String(dy)])signed++;
+      net+=((OVS.net5[s.code]||{})[dy])||0; apr+=((OVS.data[s.code]||{}).amendments||[]).length; });
+    const inc=(OVS.incidents||[]).filter(i=>list.some(s=>s.code===i.code)).length;
+    return {mgr:mgr,list:list,avg:list.length?Math.round(pctSum/list.length):0,signed:signed,net:net,apr:apr,inc:inc};
+  }).sort((a,b)=>b.avg-a.avg||a.mgr.localeCompare(b.mgr));
+  const bar=(sg,n)=>{ const p=n?Math.round(sg/n*100):0;
+    return '<div style="background:#eef0f4;border-radius:5px;height:14px;position:relative;min-width:90px">'
+      +'<div style="width:'+p+'%;background:'+(p===100?'#1B6B4A':p>=50?'#2f7d5a':'#BA7517')+';height:14px;border-radius:5px"></div>'
+      +'<span style="position:absolute;right:5px;top:0;font-size:10.5px;color:#4b5563;font-weight:700;line-height:14px">'+sg+'/'+n+'</span></div>'; };
+  let tot={n:0,pctSum:0,signed:0,net:0};
+  rows.forEach(r=>{ tot.n+=r.list.length; tot.pctSum+=r.avg*r.list.length; tot.signed+=r.signed; tot.net+=r.net; });
+  const trs=rows.map(r=>{
+    const open=OVCLEXP[r.mgr];
+    let sub="";
+    if(open) sub='<tr><td colspan="6" style="background:#f7f8fa;padding:8px 10px"><div class="ovh-badges" style="justify-content:flex-start">'
+      +r.list.map(s=>{ const c=ovCompliance(s.code,dy); const sg=(OVS.signed5[s.code]||{})[String(dy)];
+        return '<span class="ovh-b '+(sg?'green':c.pct>=70?'amber':'red')+'" style="cursor:pointer" onclick="ovOpen(\''+s.code+'\')">'+esc(s.name.split(",")[0])+' '+c.pct+'%'+(sg?' ✓':'')+'</span>'; }).join(" ")
+      +'</div></td></tr>';
+    return '<tr style="cursor:pointer" onclick="ovClToggle(\''+esc(r.mgr)+'\')">'
+      +'<td class="stk" style="font-weight:600">'+esc(r.mgr)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td>'
+      +'<td>'+r.list.length+'</td><td>'+ovPctBadge(r.avg)+'</td><td>'+bar(r.signed,r.list.length)+'</td>'
+      +'<td>'+ovNetFmt(r.net)+'</td><td class="'+(r.apr?'cell-bad':'')+'">'+(r.inc||"·")+(r.apr?' <b>'+r.apr+'⏳</b>':'')+'</td></tr>'+sub;
+  }).join("");
+  const nat='<tr class="ov-tot"><td class="stk">'+(OVROLE==="hq"?"NATIONAL":OVROLE==="regional"?"YOUR REGION":"YOUR CLUSTER")+' · '+tot.n+' stores</td><td></td>'
+    +'<td>'+ovPctBadge(tot.n?Math.round(tot.pctSum/tot.n):0)+'</td><td>'+bar(tot.signed,tot.n)+'</td><td>'+ovNetFmt(tot.net)+'</td><td></td></tr>';
+  return '<div class="ov-scroll"><table class="ov-tbl">'
+    +'<tr><th class="stk">Cluster manager</th><th>Stores</th><th>Compliance</th><th>Sign-off ratio</th><th>Net impact</th><th>Incidents · approvals</th></tr>'
+    +trs+nat+'</table></div><p class="meta" style="margin:6px 2px 0">Tap a manager row to see their stores; tap a store chip to open it.</p>';
+}
+function ovMatrix(k){ OVMATKEY=k; OVMOD="matrix"; ovRender(); }
+function ovModuleBars(){
+  const stores=ovTableStores(), dy=OVS.day;
+  return '<div class="card"><div class="card-body">'+OV_MODS.map(m=>{
+    const k=m[0]; const n=stores.filter(s=>((((OVS.filed5[s.code]||{})[dy])||[]).indexOf(k)>-1)).length;
+    const p=stores.length?Math.round(n/stores.length*100):0;
+    const due=(k!=="deposit")||ovDepositDue(dy);
+    const col=p===100?'#1B6B4A':p>=70?'#2f7d5a':p>=40?'#BA7517':'#B3261E';
+    return '<div style="cursor:pointer;margin:7px 0" onclick="ovMatrix(\''+k+'\')">'
+      +'<div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span style="font-weight:600">'+esc(m[1])+(due?'':' <small style="color:#8A5A00">· due tomorrow morning</small>')+'</span><span style="color:#4b5563;font-weight:700">'+n+'/'+stores.length+'</span></div>'
+      +'<div style="background:#eef0f4;border-radius:5px;height:13px"><div style="width:'+p+'%;background:'+(due?col:'#9aa3af')+';height:13px;border-radius:5px"></div></div></div>';
+  }).join("")+'</div></div>';
+}
+function ovModMatrix(){
+  const m=OV_MODS.find(x=>x[0]===OVMATKEY)||[OVMATKEY,OVMATKEY];
+  const stores=ovTableStores(), dy=OVS.day;
+  const rows=stores.map(s=>{ const filed=(((OVS.filed5[s.code]||{})[dy])||[]).indexOf(OVMATKEY)>-1;
+    const r=filed?ovModule(s.code,OVMATKEY):null;
+    return {s:s,filed:filed,sum:r?r.sum:"",exc:r?r.exc.length:0,at:filed?(((OVS.data[s.code]||{})._meta||{})[OVMATKEY]):null};
+  }).sort((a,b)=>(a.filed?1:0)-(b.filed?1:0)||(b.exc-a.exc)||a.s.name.localeCompare(b.s.name));
+  const trs=rows.map(r=>'<tr onclick="ovOpen(\''+r.s.code+'\')">'
+    +'<td class="stk">'+esc(r.s.name)+'</td><td class="muted">'+esc(r.s.region)+'</td>'
+    +'<td class="'+(r.filed?'':'cell-bad')+'">'+(r.filed?'✓ filed':'✗ not filed')+'</td>'
+    +'<td>'+(r.sum?esc(r.sum):'·')+(r.exc?' <b style="color:#B3261E">⚑'+r.exc+'</b>':'')+'</td>'
+    +(function(){const c=frCell(r.at);return '<td class="'+c.cls+'">'+c.v+'</td>';})()+'</tr>').join("");
+  const done=rows.filter(r=>r.filed).length;
+  return '<div class="ov-cashbar"><div><b>'+esc(m[1])+' — store-wise</b> · '+OVS.dayLabel+' · '+done+' of '+stores.length+' filed</div>'
+    +'<button class="btn btn-line btn-sm" onclick="ovSetMod(\'home\')">‹ Back to dashboard</button></div>'
+    +'<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Store</th><th>Cluster manager</th><th>Status</th><th>Summary'+(OVS.day?'':'')+'</th><th>Updated</th></tr>'+trs+'</table></div>'
+    +'<p class="meta" style="margin:8px 2px 0">Not-filed stores are listed first. Tap a row to open the store\'s full day.</p>';
+}
+function ovStoreRank(){
+  const stores=ovTableStores(), dy=OVS.day;
+  const passF=(code)=>{ const st=ovStatus(code); if(OVFILTER==="all")return true;
+    if(OVFILTER==="action") return st==="pending"||st==="flagged"||st==="partial"||st==="notsub";
+    if(OVFILTER==="exceptions") return st==="flagged"||st==="pending";
+    if(OVFILTER==="signed") return st==="signed"; return true; };
+  const rows=stores.filter(s=>passF(s.code)).map(s=>{
+    const c=ovCompliance(s.code,dy), sg=(OVS.signed5[s.code]||{})[String(dy)], ex=OVS.data[s.code]?ovModExc(s.code):0;
+    return {s:s,c:c,sg:sg,ex:ex,net:((OVS.net5[s.code]||{})[dy])||0};
+  }).sort((a,b)=>a.c.pct-b.c.pct||b.ex-a.ex||a.s.name.localeCompare(b.s.name));
+  if(!rows.length) return '<div class="card"><div class="card-body"><span class="meta">No stores match this filter.</span></div></div>';
+  const trs=rows.map(r=>'<tr onclick="ovOpen(\''+r.s.code+'\')">'
+    +'<td class="stk">'+esc(r.s.name)+'</td><td class="muted">'+esc(r.s.region)+'</td>'
+    +'<td>'+r.c.filed+'/'+r.c.req+(r.c.depFiled&&!ovDepositDue(dy)?' +dep':'')+'</td>'
+    +'<td>'+ovPctBadge(r.c.pct)+'</td>'
+    +'<td class="'+(r.ex?'cell-bad':'')+'">'+(r.ex||'·')+'</td>'
+    +'<td>'+ovNetFmt(r.net)+'</td>'
+    +'<td>'+(r.sg?'<span style="color:#1B6B4A;font-weight:700">✓ '+esc(r.sg.by)+'</span>':'<span style="color:#8A5A00">pending</span>')+'</td></tr>').join("");
+  return '<div class="ov-scroll"><table class="ov-tbl">'
+    +'<tr><th class="stk">Store</th><th>Cluster manager</th><th>Filed</th><th>Compliance</th><th>Exceptions</th><th>Net impact</th><th>Sign-off</th></tr>'
+    +trs+'</table></div><p class="meta" style="margin:6px 2px 0">Lowest compliance first — start at the top. Tap a row to review &amp; sign off.</p>';
+}
+function ovTrend(){
+  const ev=CONFIG.EVENTS[0]||{days:[]}; const stores=ovTableStores();
+  const trs=(ev.days||[]).filter(d=>d.day<=OVS.today).map(d=>{
+    const dy=d.day; let pctSum=0,signed=0,net=0,banked=0;
+    stores.forEach(s=>{ pctSum+=ovCompliance(s.code,dy).pct;
+      if((OVS.signed5[s.code]||{})[String(dy)])signed++;
+      net+=((OVS.net5[s.code]||{})[dy])||0;
+      const dp=(OVS.deposit5[s.code]||{})[dy]; if(dp&&dp.status==="banked")banked++; });
+    const inc=(OVS.incidents||[]).filter(i=>{ const dd=(ev.days||[]).find(x=>x.day===dy); return dd&&i.date===dd.date&&stores.some(s=>s.code===i.code); }).length;
+    const avg=stores.length?Math.round(pctSum/stores.length):0;
+    return '<tr style="cursor:pointer" onclick="ovSetHomeDay('+dy+')"><td class="stk">Day '+dy+(dy===OVS.today?' · today':'')+(dy===OVS.day?' ◀ viewing':'')+'</td>'
+      +'<td>'+ovPctBadge(avg)+'</td><td>'+signed+'/'+stores.length+'</td><td>'+banked+'/'+stores.length+'</td>'
+      +'<td>'+ovNetFmt(net)+'</td><td class="'+(inc?'cell-warn':'muted')+'">'+(inc||'—')+'</td></tr>';
+  }).join("");
+  return '<div class="ov-scroll"><table class="ov-tbl">'
+    +'<tr><th class="stk">Sale day</th><th>Avg compliance</th><th>Signed off</th><th>Deposits banked</th><th>Net impact</th><th>Incidents</th></tr>'
+    +trs+'</table></div><p class="meta" style="margin:6px 2px 0">Tap a day to review it above. Future days unlock as the event runs.</p>';
+}
+function ovExportAll(){
+  toast("Preparing all CSV files — if your browser asks, allow multiple downloads.");
+  const seq=[ovOverviewCsv,ovCashCsv,ovPickCsv,ovDepositCsv,()=>ovShiftCsv("wager"),()=>ovShiftCsv("guard"),
+    ovRatingCsv,ovBudgetCsv,ovCashierCsv,ovSignoffCsv,ovIncidentCsv];
+  seq.forEach((f,i)=>setTimeout(()=>{try{f();}catch(e){}},i*450));
+}
+function ovHqHome(){
+  const daysBar='<div class="ov-daysel" style="margin:0 0 10px">Reviewing: '
+    +(CONFIG.EVENTS[0]||{days:[]}).days.map(d=>{ const fut=d.day>OVS.today;
+       return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?" · today":"")+'</button>'; }).join("")+'</div>';
+  return daysBar
+    +ovNationalStrip()
+    +ovAttention()
+    +ovPrepStrip()
+    +ovPostStrip()
+    +'<div class="ovh-sechead">Cluster scorecard — compliance &amp; sign-off ratio by manager</div>'+ovClusterScore()
+    +'<div class="ovh-sechead">Completion by module — tap a bar for the store-wise view</div>'+ovModuleBars()
+    +'<div class="ovh-sechead" id="ovRank">All stores — lowest compliance first · tap a store to review &amp; sign off'
+      +(OVFILTER!=="all"?' · <span style="color:#B3261E">filtered: '+(OVFILTER==="action"?"action needed":OVFILTER)+'</span>':'')+'</div>'
+    +ovStoreRank()
+    +'<div class="ovh-sechead">Day-by-day trend — whole event</div>'+ovTrend()
+    +'<div class="ovh-sechead">Deep-dive reports</div>'
+    +'<div class="card"><div class="card-body"><button class="btn btn-line" style="width:100%" onclick="ovExportAll()">📦 Export everything — all reports as CSV</button></div></div>'
+    +ovDoors();
+}
+function ovDoors(){
+  return '<div class="ovh-doors">'
+    +'<div class="ovh-door"><h4>💰 Money</h4>'
+      +'<button onclick="ovSetMod(\'picks\')">Cash pick-ups</button>'
+      +'<button onclick="ovSetMod(\'dayend\')">Till &amp; reconciliation</button>'
+      +'<button onclick="ovSetMod(\'deposit\')">Bank deposits</button>'
+      +'<button onclick="ovSetMod(\'budget\')">Event budget</button>'
+      +'<button onclick="ovSetMod(\'cash\')">Cash report</button>'
+      +'<button onclick="ovSetMod(\'cashiers\')">Cashier variance</button></div>'
+    +'<div class="ovh-door"><h4>👥 People</h4>'
+      +'<button onclick="ovSetMod(\'shift_wager\')">Daily wagers</button>'
+      +'<button onclick="ovSetMod(\'shift_guard\')">Security guards</button>'
+      +'<button onclick="ovSetMod(\'performance\')">Staff rating</button>'
+      +'<button onclick="ovMatrix(\'support\')">HO attendance</button></div>'
+    +'<div class="ovh-door"><h4>🛡 Governance</h4>'
+      +'<button onclick="ovSetMod(\'prep\')">🌙 Sale-day preparation</button>'
+      +'<button onclick="ovSetMod(\'signoffs\')">Sign-offs by cluster</button>'
+      +'<button onclick="ovSetMod(\'approvals\')">Approvals queue</button>'
+      +'<button onclick="ovSetMod(\'incidents\')">Incident log</button>'
+      +'<button onclick="ovSetMod(\'overview\')">All-stores status table</button></div>'
+    +'</div>';
+}
 function ovHome(){
+  if(OVROLE==="dept"){ OVMOD="shift_"+OVDEPT; return ovShiftReport(OVDEPT); }  /* departments land on their report */
+  return ovHqHome(); }   /* one dashboard for HQ, regional AND cluster — each sees only their stores */
+function ovClusterHomeClassic(){
   const stores=ovTableStores();
   const prio={pending:0,flagged:1,partial:2,notsub:3,ready:4,signed:5};
-  const sorted=stores.slice().sort((a,b)=>(prio[ovStatus(a.code)]??9)-(prio[ovStatus(b.code)]??9)||a.name.localeCompare(b.name));
+  const passF=(code)=>{ const st=ovStatus(code); if(OVFILTER==="all")return true;
+    if(OVFILTER==="action") return st==="pending"||st==="flagged"||st==="partial"||st==="notsub";
+    if(OVFILTER==="exceptions") return st==="flagged"||st==="pending";
+    if(OVFILTER==="signed") return st==="signed"; return true; };
+  const sorted=stores.filter(x=>passF(x.code)).slice().sort((a,b)=>(prio[ovStatus(a.code)]??9)-(prio[ovStatus(b.code)]??9)||a.name.localeCompare(b.name));
   let filed=0,banked=0,shortStores=0,req=0,arr=0,needs=0;
   stores.forEach(x=>{ const rec=OVS.data[x.code]; const st=ovStatus(x.code);
     if(rec&&ovFilled(x.code)>0) filed++;
@@ -3829,12 +4489,18 @@ function ovHome(){
     if(rec&&(rec.amendments||[]).length) {}
   });
   const pctStaff=req?Math.round(arr/req*100):null;
+  /* cluster's own compliance + sign-off ratio (rollup on home) */
+  let clPct=0, clSigned=0;
+  stores.forEach(x=>{ clPct+=ovCompliance(x.code,OVS.day).pct; if((OVS.signed5[x.code]||{})[String(OVS.day)])clSigned++; });
+  clPct=stores.length?Math.round(clPct/stores.length):0;
   const rows=sorted.map(x=>{ const att=["pending","flagged"].includes(ovStatus(x.code));
     return '<div class="ovh-row'+(att?' att':'')+'" onclick="ovOpen(\''+x.code+'\')">'
       +'<div><div class="ovh-name">'+esc(x.name)+'</div>'
       +'<div class="ovh-sub">'+esc(x.region)+' · '+ovFilled(x.code)+' of '+OV_MODS.length+' modules filed</div></div>'
       +'<div class="ovh-badges">'+ovHomeBadges(x.code)+'</div></div>'; }).join("");
   const strip='<div class="ov-strip">'
+    +'<div class="ov-stat'+(clPct>=90?' good':clPct<70?' bad':' warn')+'"><b>'+clPct+'%</b><span>your compliance</span></div>'
+    +'<div class="ov-stat'+(clSigned===stores.length&&stores.length?' good':'')+'"><b>'+clSigned+'/'+stores.length+'</b><span>signed off</span></div>'
     +'<div class="ov-stat"><b>'+filed+'/'+stores.length+'</b><span>stores filed</span></div>'
     +'<div class="ov-stat'+(banked<filed?' warn':' good')+'"><b>'+banked+'</b><span>deposits banked</span></div>'
     +'<div class="ov-stat'+(shortStores?' bad':'')+'"><b>'+shortStores+'</b><span>tills short</span></div>'
@@ -3854,20 +4520,35 @@ function ovHome(){
     +'<div class="ovh-door"><h4>🗂 Everything</h4>'
       +'<button onclick="ovSetMod(\'approvals\')">Approvals queue</button>'
       +'<button onclick="ovSetMod(\'incidents\')">Incident log</button>'
+      +'<button onclick="ovSetMod(\'signoffs\')">Sign-offs by cluster</button>' 
       +'<button onclick="ovSetMod(\'overview\')">All-stores status table</button></div>' 
     +'</div>';
-  const head='<div class="ovh-sechead">Your stores — tap a store to review &amp; sign off</div>';
-  return strip+head+rows+doors;
+  const daysBar='<div class="ov-daysel" style="margin:0 0 10px">Reviewing: '
+    +(CONFIG.EVENTS[0]||{days:[]}).days.map(d=>{
+       const fut=d.day>OVS.today;
+       return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?" · today":"")+'</button>'; }).join("")
+    +'</div>';
+  const head='<div class="ovh-sechead">Your stores — tap a store to review &amp; sign off'
+    +(OVFILTER!=="all"?' · <span style="color:#B3261E">filtered: '+(OVFILTER==="action"?"action needed":OVFILTER)+'</span>':'')+'</div>';
+  return daysBar+strip+head+rows+doors;
 }
+/* Cluster managers get the SAME dashboard as head office, automatically scoped
+   to only their stores by ovTableStores(); ovClusterHomeClassic above is kept
+   only as a fallback reference. */
 function ovLens(){
   const head=(OVROLE==="cluster")
     ? '<p class="meta" style="margin:0 0 8px"><button class="cl-back" onclick="ovExit()">‹ Sign out of cluster</button> · '+esc(OVREGION)+' · '+OVS.dayLabel+'</p>'
+    : (OVROLE==="regional")
+    ? '<p class="meta" style="margin:0 0 8px"><button class="cl-back" onclick="ovExit()">‹ Sign out</button> · Regional manager '+esc(OVRM)+' · review only · '+OVS.dayLabel+'</p>'
+    : (OVROLE==="dept")
+    ? '<p class="meta" style="margin:0 0 8px"><button class="cl-back" onclick="ovExit()">‹ Sign out</button> · '+esc(OVRM)+' · all stores · review only · '+OVS.dayLabel+'</p>'
     : '<p class="meta" style="margin:0 0 8px">Head office · '+OVS.dayLabel+'</p>';
   let body;
   if(OVMOD==="home") return head+ovRegionBar()+ovHome();
   if(OVMOD==="overview") body=ovList();
   else if(OVMOD==="approvals") body=ovApprovals();
   else if(OVMOD==="incidents") body=ovIncidentReport();
+  else if(OVMOD==="signoffs") body=ovSignoffReport();
   else if(OVMOD==="cash") body=ovCashReport();
   else if(OVMOD==="picks") body=ovPickReport();
   else if(OVMOD==="cashiers") body=ovCashierReport();
@@ -3876,6 +4557,9 @@ function ovLens(){
   else if(OVMOD==="shift_guard") body=ovShiftReport("guard");
   else if(OVMOD==="performance") body=ovRatingReport();
   else if(OVMOD==="budget") body=ovBudgetReport();
+  else if(OVMOD==="matrix") body=ovModMatrix();
+  else if(OVMOD==="prep") body=ovPrepReport();
+  else if(OVMOD==="postlens") body=ovPostReport();
   else body=ovTable(OVMOD);
   return head+ovPills()+ovRegionBar()+body;
 }
@@ -3952,29 +4636,44 @@ function ovPickCsv(){ const rows=[["Store","Region","Day","1st pick-up","2nd pic
   downloadCsv("pickup-report.csv",rows); }
 
 /* ---- Cashier-wise shortage & excess (across stores/days) ---- */
-function ovCashierAgg(){ const scopeRegions=new Set(ovTableStores().map(s=>s.region));
+function ovCashierAgg(){
   const m={}; (OVS.tillLines||[]).forEach(l=>{ if(OVREGFILTER && l.region!==OVREGFILTER) return; if(OVROLE==="cluster" && l.region!==OVREGION) return;
-    const k=l.cashier+"|"+l.payroll; if(!m[k]) m[k]={cashier:l.cashier,payroll:l.payroll,short:0,over:0,inc:0,stores:new Set()};
-    if(l.result==="Short"){ m[k].short+=l.amount; m[k].inc++; } else if(l.result==="Over"){ m[k].over+=l.amount; m[k].inc++; }
-    if(l.result!=="Balanced") m[k].stores.add(l.store); });
-  return Object.values(m).sort((a,b)=> (b.short-a.short)||(b.over-a.over)); }
+    const k=l.cashier+"|"+l.payroll; if(!m[k]) m[k]={cashier:l.cashier,payroll:l.payroll,cs:0,co:0,ks:0,ko:0,inc:0,stores:new Set()};
+    const cashErr=l.result==="Short"||l.result==="Over", cardErr=l.cardResult==="Short"||l.cardResult==="Over";
+    if(l.cashVar<0) m[k].cs+=-l.cashVar; else if(l.cashVar>0) m[k].co+=l.cashVar;
+    if(l.cardVar<0) m[k].ks+=-l.cardVar; else if(l.cardVar>0) m[k].ko+=l.cardVar;
+    if(cashErr||cardErr){ m[k].inc++; m[k].stores.add(l.store); } });
+  const out=Object.values(m);
+  out.forEach(c=>{ c.net=(c.co-c.cs)+(c.ko-c.ks); c.gross=c.cs+c.co+c.ks+c.ko; c.zeroButErrs=(c.net===0&&c.gross>0); });
+  return out.sort((a,b)=> (a.net-b.net)||(b.gross-a.gross)); }   /* worst net first, then most errors */
+function ovNetCellHtml(n){ return '<td class="'+(n<0?'cell-bad':'')+'" style="font-weight:800;'+(n>0?'color:#1B6B4A;':'')+'">'+(n===0?'0':(n>0?'+':'−')+pkr(Math.abs(n)))+'</td>'; }
 function ovCashierReport(){
   const list=ovCashierAgg();
-  if(!list.length) return '<div class="ov-cashbar"><div><b>Cashier variance</b></div></div><div class="card"><div class="card-body"><span class="meta">No till shortages or excesses recorded for this scope.</span></div></div>';
-  const th='<tr><th class="stk">Cashier</th><th>Payroll</th><th>Incidents</th><th>Total shortage</th><th>Total excess</th><th>Store(s)</th></tr>';
-  let trs="", T={short:0,over:0,inc:0};
-  list.forEach(c=>{ T.short+=c.short;T.over+=c.over;T.inc+=c.inc;
-    trs+='<tr><td class="stk">'+esc(c.cashier)+'</td><td class="muted">'+esc(c.payroll)+'</td><td>'+c.inc+'</td>'
-      +'<td class="'+(c.short>0?"cell-bad":"muted")+'">'+(c.short>0?pkr(c.short):"0")+'</td>'
-      +'<td class="'+(c.over>0?"cell-warn":"muted")+'">'+(c.over>0?pkr(c.over):"0")+'</td>'
+  if(!list.length) return '<div class="ov-cashbar"><div><b>Cashier variance</b></div></div><div class="card"><div class="card-body"><span class="meta">No till lines recorded for this scope.</span></div></div>';
+  const th='<tr><th class="stk">Cashier</th><th>Payroll</th><th>Errors</th><th>Cash short</th><th>Cash excess</th><th>Card short</th><th>Card excess</th><th>NET impact</th><th>Store(s)</th></tr>';
+  let trs="", T={cs:0,co:0,ks:0,ko:0,inc:0};
+  const zeroErrs=list.filter(c=>c.zeroButErrs).length;
+  list.forEach(c=>{ T.cs+=c.cs;T.co+=c.co;T.ks+=c.ks;T.ko+=c.ko;T.inc+=c.inc;
+    trs+='<tr'+(c.zeroButErrs?' style="background:#FDF3E2"':'')+'><td class="stk">'+esc(c.cashier)
+      +(c.zeroButErrs?' <span class="ovh-b amber">⚠ settles to 0 — errors made</span>':'')+'</td><td class="muted">'+esc(c.payroll)+'</td><td class="'+(c.inc?'cell-warn':'muted')+'">'+c.inc+'</td>'
+      +'<td class="'+(c.cs>0?"cell-bad":"muted")+'">'+(c.cs>0?pkr(c.cs):"0")+'</td>'
+      +'<td class="'+(c.co>0?"cell-warn":"muted")+'">'+(c.co>0?pkr(c.co):"0")+'</td>'
+      +'<td class="'+(c.ks>0?"cell-bad":"muted")+'">'+(c.ks>0?pkr(c.ks):"0")+'</td>'
+      +'<td class="'+(c.ko>0?"cell-warn":"muted")+'">'+(c.ko>0?pkr(c.ko):"0")+'</td>'
+      +ovNetCellHtml(c.net)
       +'<td class="muted">'+esc([...c.stores].join(", ")||"—")+'</td></tr>'; });
-  const tot='<tr class="ov-tot"><td class="stk">TOTAL · '+list.length+' cashiers</td><td></td><td>'+T.inc+'</td><td class="'+(T.short>0?"cell-bad":"")+'">'+pkr(T.short)+'</td><td class="'+(T.over>0?"cell-warn":"")+'">'+pkr(T.over)+'</td><td></td></tr>';
-  return '<div class="ov-cashbar"><div><b>Cashier variance</b> · '+(OVREGFILTER||OVREGION||"all regions")+' · worst first</div><button class="btn btn-line btn-sm" onclick="ovCashierCsv()">⬇ Download CSV</button></div>'
+  const TN=(T.co-T.cs)+(T.ko-T.ks);
+  const tot='<tr class="ov-tot"><td class="stk">TOTAL · '+list.length+' cashiers</td><td></td><td>'+T.inc+'</td>'
+    +'<td class="'+(T.cs>0?"cell-bad":"")+'">'+pkr(T.cs)+'</td><td class="'+(T.co>0?"cell-warn":"")+'">'+pkr(T.co)+'</td>'
+    +'<td class="'+(T.ks>0?"cell-bad":"")+'">'+pkr(T.ks)+'</td><td class="'+(T.ko>0?"cell-warn":"")+'">'+pkr(T.ko)+'</td>'
+    +ovNetCellHtml(TN)+'<td></td></tr>';
+  return '<div class="ov-cashbar"><div><b>Cashier variance — cash + card, net impact</b> · '+(OVREGFILTER||OVREGION||"all regions")+' · worst net first</div><button class="btn btn-line btn-sm" onclick="ovCashierCsv()">⬇ Download CSV</button></div>'
+    +(zeroErrs?'<p class="meta" style="margin:0 0 8px;color:#8A5A00"><b>⚠ '+zeroErrs+' cashier'+(zeroErrs>1?'s':'')+' net to ZERO but made errors on both sides</b> — highlighted amber below. A cash short covered by a card excess still means two mistakes.</p>':'')
     +'<div class="ov-scroll"><table class="ov-tbl">'+th+trs+tot+'</table></div>'
-    +'<p class="meta" style="margin:8px 2px 0">Every till line where a cashier was Short or Over, summed per cashier across stores and days. A cashier appearing repeatedly is the signal to act on.</p>';
+    +'<p class="meta" style="margin:8px 2px 0"><b>NET impact</b> = (cash excess − cash short) + (card excess − card short), per cashier across stores and days. Red net = money missing. Amber rows settle to 0 yet carry errors — the count in the Errors column is the discipline signal.</p>';
 }
-function ovCashierCsv(){ const rows=[["Cashier","Payroll","Incidents","Total shortage","Total excess","Stores"]];
-  ovCashierAgg().forEach(c=>rows.push([c.cashier,c.payroll,c.inc,c.short,c.over,[...c.stores].join("; ")]));
+function ovCashierCsv(){ const rows=[["Cashier","Payroll","Errors","Cash short","Cash excess","Card short","Card excess","NET impact","Settles to 0 but errors made","Stores"]];
+  ovCashierAgg().forEach(c=>rows.push([c.cashier,c.payroll,c.inc,c.cs,c.co,c.ks,c.ko,c.net,c.zeroButErrs?"YES — check":"",[...c.stores].join("; ")]));
   downloadCsv("cashier-variance-report.csv",rows); }
 
 
@@ -4035,13 +4734,50 @@ function ovDepositCsv(){ const rows=[["Store","Region","Day","Cash in system","D
 
 
 /* ---- Head-office daily-wagers / security-guards report (attendance · punctuality · shift · gender) ---- */
-function ovSetShiftDay(dy){ OVSHIFTDAY=dy; ovRender(); }
+function ovSetShiftDay(dy){ OVSHIFTDAY=dy; OVSHIFTEXP={}; ovRender(); }
+function ovShiftToggle(mod,code){ const k=mod+"|"+code; OVSHIFTEXP[k]=!OVSHIFTEXP[k]; ovRender(); }
+function ovShiftPplLines(f,mod,code){
+  if(!(f.ppl||[]).length) return '<div class="ov-l" style="color:#6b7280">Filed without named people.</div>';
+  return f.ppl.map(p=>'<div class="ov-l">'+esc(p.n||"(no name)")+(p.ct?' · ☎ '+esc(p.ct):'')+' · '+esc(p.sh||"—")+(p.g?' · '+esc(p.g):'')+(p.co?' · '+esc(p.co):'')
+    +((p.si||p.so)?' · <small style="color:#6b7280">sched '+(p.si?fmt12(p.si):'—')+'–'+(p.so?fmt12(p.so):'—')+'</small>':'')
+    +' · actual in '+(p.i?fmt12(p.i):'—')+' out '+(p.o?fmt12(p.o):'—')
+    +(p.m!=null?' · <b>'+fmtMins(p.m)+' worked</b>':'')
+    +(p.fl.length?' '+p.fl.map(x=>'<span class="ov-echip">⚑ '+esc(x)+'</span>').join(" "):'')+'</div>').join("")
+    +'<div class="ov-l" style="margin-top:4px"><a style="color:#1f4e8c;cursor:pointer;font-weight:600" onclick="event.stopPropagation();ovOpen(\''+code+'\')">Open full day ›</a></div>';
+}
+/* TIMEKEEPING CSV — the complete per-person record: date-wise, store-wise,
+   scheduled vs actual in/out, hours worked, LATE/EARLY highlighted, rating + remark. */
+function ovTimekeepCsv(mod){
+  const D=OVS[mod+"5"], guard=mod==="guard";
+  const ev=CONFIG.EVENTS[0]||{days:[]};
+  const rows=[["Store","Cluster manager","Day","Date","Employee","Contact number",guard?"Company":"Gender","Shift",
+    "Scheduled in","Scheduled out","Actual in","Actual out","Hours worked","Punctuality","Rating","Rating remark"]];
+  ovTableStores().filter(s=>D&&D[s.code]).forEach(s=>{ for(let dy=1;dy<=5;dy++){
+    const f=D[s.code][dy]; if(!(f.ppl||[]).length) continue;
+    const date=((ev.days||[]).find(x=>String(x.day)===String(dy))||{}).date||"";
+    const rp=((OVS.rating5[s.code]||{})[dy]||{}).ppl||[];
+    f.ppl.forEach(p=>{
+      const rt=rp.find(x=>x.n===p.n&&x.md===(guard?"Guard":"Wager"));
+      const punct=p.fl.length?("⚠ "+p.fl.join(" + ").toUpperCase()):"On time";
+      rows.push([s.name,s.region,"Day "+dy,date,p.n,p.ct||"",guard?(p.co||""):(p.g||""),p.sh,
+        p.si?fmt12(p.si):"",p.so?fmt12(p.so):"",p.i?fmt12(p.i):"",p.o?fmt12(p.o):"",
+        p.m!=null?fmtMins(p.m):"",punct,rt?rt.w:"",rt?(rt.rm||""):""]);
+    }); } });
+  downloadCsv((guard?"guards":"wagers")+"-timekeeping.csv",rows);
+}
+function ovShiftPeopleCsv(mod){
+  const D=OVS[mod+"5"], guard=mod==="guard";
+  const rows=[["Store","Cluster manager","Day","Employee","Contact number","Shift","Gender","Time in","Time out","Hours worked","Flags"]];
+  ovTableStores().filter(s=>D&&D[s.code]).forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=D[s.code][dy];
+    (f.ppl||[]).forEach(p=>rows.push([s.name,s.region,"Day "+dy,p.n,p.ct||"",p.sh,p.g,p.i?fmt12(p.i):"",p.o?fmt12(p.o):"",p.m!=null?fmtMins(p.m):"",p.fl.join(" | ")])); } });
+  downloadCsv((guard?"guards":"wagers")+"-employee-wise.csv",rows);
+}
 function ovShiftReport(mod){
   const D=OVS[mod+"5"]; const stores=ovTableStores().filter(s=>D&&D[s.code]);
   if(!stores.length) return '<div class="card"><div class="card-body"><span class="meta">No '+(mod==="guard"?"guards":"wagers")+' filed for this scope.</span></div></div>';
   const guard=mod==="guard", reqW=guard?"Requested":"Demanded", s3=guard?"Overnight":"Late";
-  const dayTot=(dy)=>{ let a={dem:0,arr:0,short:0,late:0,early:0,first:0,mid:0,last:0,male:0,female:0}; stores.forEach(s=>{ const f=D[s.code][dy]; Object.keys(a).forEach(k=>a[k]+=f[k]); }); return a; };
-  const allTot=()=>{ let a={dem:0,arr:0,short:0,late:0,early:0,first:0,mid:0,last:0,male:0,female:0}; for(let dy=1;dy<=5;dy++){ const d=dayTot(dy); Object.keys(a).forEach(k=>a[k]+=d[k]); } return a; };
+  const dayTot=(dy)=>{ let a={dem:0,arr:0,short:0,late:0,early:0,first:0,mid:0,last:0,male:0,female:0,mins:0}; stores.forEach(s=>{ const f=D[s.code][dy]; Object.keys(a).forEach(k=>a[k]+=(f[k]||0)); }); return a; };
+  const allTot=()=>{ let a={dem:0,arr:0,short:0,late:0,early:0,first:0,mid:0,last:0,male:0,female:0,mins:0}; for(let dy=1;dy<=5;dy++){ const d=dayTot(dy); Object.keys(a).forEach(k=>a[k]+=d[k]); } return a; };
   const isAll=OVSHIFTDAY==="all"; const T=isAll?allTot():dayTot(OVSHIFTDAY);
   const btns=[1,2,3,4,5].map(dy=>'<button class="ov-daybtn'+(OVSHIFTDAY===dy?" on":"")+'" onclick="ovSetShiftDay('+dy+')">Day '+dy+'</button>').join("")
     +'<button class="ov-daybtn ov-allbtn'+(isAll?" on":"")+'" onclick="ovSetShiftDay(\'all\')">All days</button>';
@@ -4052,40 +4788,57 @@ function ovShiftReport(mod){
   const header='<div class="ov-dephdr"><div class="ov-dephdr-t">'+esc((guard?"Security guards":"Daily wagers"))+' — '+hdrTitle+'</div><div class="ov-tiles">'
     +tile(reqW,T.dem)+tile("Arrived",T.arr,T.arr<T.dem)+tile("Short",T.short,T.short>0)+tile("Late arrivals",T.late,T.late>0)+tile("Early going",T.early,T.early>0)
     +tile("First / Mid / "+s3,T.first+" / "+T.mid+" / "+T.last)+tile("Gender M / F",T.male+" / "+T.female)
+    +tile("Hours worked",fmtMins(T.mins))
     +'</div></div>';
   let body;
   if(isAll){
-    const th='<tr><th class="stk">Sale day</th><th class="gdiv">'+reqW+'</th><th>Arrived</th><th>Short</th><th class="gdiv">Late</th><th>Early</th><th class="gdiv">First</th><th>Mid</th><th>'+s3+'</th><th class="gdiv">M</th><th>F</th></tr>';
+    const th='<tr><th class="stk">Sale day</th><th class="gdiv">'+reqW+'</th><th>Arrived</th><th>Short</th><th class="gdiv">Late</th><th>Early</th><th class="gdiv">First</th><th>Mid</th><th>'+s3+'</th><th class="gdiv">M</th><th>F</th><th class="gdiv">Hours worked</th></tr>';
     let trs=""; for(let dy=1;dy<=5;dy++){ const a=dayTot(dy);
-      trs+='<tr onclick="ovSetShiftDay('+dy+')"><td class="stk">Day '+dy+' ›</td><td class="gdiv">'+a.dem+'</td><td class="'+(a.arr<a.dem?"cell-bad":"")+'">'+a.arr+'</td><td class="'+(a.short?"cell-bad":"muted")+'">'+a.short+'</td><td class="gdiv '+(a.late?"cell-warn":"muted")+'">'+a.late+'</td><td class="'+(a.early?"cell-warn":"muted")+'">'+a.early+'</td><td class="gdiv">'+a.first+'</td><td>'+a.mid+'</td><td>'+a.last+'</td><td class="gdiv">'+a.male+'</td><td>'+a.female+'</td></tr>'; }
+      trs+='<tr onclick="ovSetShiftDay('+dy+')"><td class="stk">Day '+dy+' ›</td><td class="gdiv">'+a.dem+'</td><td class="'+(a.arr<a.dem?"cell-bad":"")+'">'+a.arr+'</td><td class="'+(a.short?"cell-bad":"muted")+'">'+a.short+'</td><td class="gdiv '+(a.late?"cell-warn":"muted")+'">'+a.late+'</td><td class="'+(a.early?"cell-warn":"muted")+'">'+a.early+'</td><td class="gdiv">'+a.first+'</td><td>'+a.mid+'</td><td>'+a.last+'</td><td class="gdiv">'+a.male+'</td><td>'+a.female+'</td><td class="gdiv"><b>'+fmtMins(a.mins)+'</b></td></tr>'; }
     const tt=allTot();
-    const tot='<tr class="ov-tot"><td class="stk">ALL 5 DAYS</td><td class="gdiv">'+tt.dem+'</td><td class="'+(tt.arr<tt.dem?"cell-bad":"")+'">'+tt.arr+'</td><td class="'+(tt.short?"cell-bad":"")+'">'+tt.short+'</td><td class="gdiv '+(tt.late?"cell-warn":"")+'">'+tt.late+'</td><td class="'+(tt.early?"cell-warn":"")+'">'+tt.early+'</td><td class="gdiv">'+tt.first+'</td><td>'+tt.mid+'</td><td>'+tt.last+'</td><td class="gdiv">'+tt.male+'</td><td>'+tt.female+'</td></tr>';
+    const tot='<tr class="ov-tot"><td class="stk">ALL 5 DAYS</td><td class="gdiv">'+tt.dem+'</td><td class="'+(tt.arr<tt.dem?"cell-bad":"")+'">'+tt.arr+'</td><td class="'+(tt.short?"cell-bad":"")+'">'+tt.short+'</td><td class="gdiv '+(tt.late?"cell-warn":"")+'">'+tt.late+'</td><td class="'+(tt.early?"cell-warn":"")+'">'+tt.early+'</td><td class="gdiv">'+tt.first+'</td><td>'+tt.mid+'</td><td>'+tt.last+'</td><td class="gdiv">'+tt.male+'</td><td>'+tt.female+'</td><td class="gdiv"><b>'+fmtMins(tt.mins)+'</b></td></tr>';
     body='<p class="meta" style="margin:0 0 6px">Every sale day totalled. Tap a day to open its store detail.</p><div class="ov-scroll"><table class="ov-tbl">'+th+trs+tot+'</table></div>';
   } else {
     let list=stores.map(s=>{ const f=D[s.code][OVSHIFTDAY]; return {s,f,prio:(f.short>0||f.late>0||f.early>0)}; });
     list.sort((a,b)=>(b.prio-a.prio));
-    const th='<tr><th class="stk" rowspan="2">Store</th><th class="ov-grp gdiv" colspan="3">Attendance</th><th class="ov-grp gdiv" colspan="2">Punctuality</th><th class="ov-grp gdiv" colspan="3">Shift coverage</th><th class="ov-grp gdiv" colspan="2">Gender</th></tr>'
+    const th='<tr><th class="stk" rowspan="2">Store</th><th class="ov-grp gdiv" colspan="3">Attendance</th><th class="ov-grp gdiv" colspan="2">Punctuality</th><th class="ov-grp gdiv" colspan="3">Shift coverage</th><th class="ov-grp gdiv" colspan="2">Gender</th><th class="gdiv" rowspan="2">Hours worked</th></tr>'
       +'<tr><th class="gdiv">'+reqW+'</th><th>Arrived</th><th>Short</th><th class="gdiv">Late</th><th>Early</th><th class="gdiv">First</th><th>Mid</th><th>'+s3+'</th><th class="gdiv">M</th><th>F</th></tr>';
     const rows=list.map(function(o){ const s=o.s,f=o.f,prio=o.prio;
-      return '<tr class="'+(prio?"ov-prio":"")+'" onclick="ovOpen(\''+s.code+'\')"><td class="stk">'+(prio?'<span class="ov-priotag">flag</span> ':'')+esc(s.name)+' <small style="color:#9aa">'+esc(s.region)+'</small></td>'
+      const open=OVSHIFTEXP[mod+"|"+s.code];
+      let tr='<tr class="'+(prio?"ov-prio":"")+'" onclick="ovShiftToggle(\''+mod+'\',\''+s.code+'\')"><td class="stk">'+(prio?'<span class="ov-priotag">flag</span> ':'')+esc(s.name)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span> <small style="color:#9aa">'+esc(s.region)+'</small></td>'
         +'<td class="gdiv">'+f.dem+'</td><td class="'+(f.arr<f.dem?"cell-bad":"")+'">'+f.arr+'</td><td class="'+(f.short?"cell-bad":"muted")+'">'+f.short+'</td>'
         +'<td class="gdiv '+(f.late?"cell-warn":"muted")+'">'+f.late+'</td><td class="'+(f.early?"cell-warn":"muted")+'">'+f.early+'</td>'
-        +'<td class="gdiv">'+f.first+'</td><td>'+f.mid+'</td><td>'+f.last+'</td><td class="gdiv">'+f.male+'</td><td>'+f.female+'</td></tr>'; }).join("");
-    body='<p class="meta" style="margin:0 0 6px">'+T.arr+' of '+T.dem+' arrived · '+T.short+' short · '+T.late+' late · '+T.early+' early going. Flagged rows first.</p><div class="ov-scroll"><table class="ov-tbl">'+th+rows+'</table></div>';
+        +'<td class="gdiv">'+f.first+'</td><td>'+f.mid+'</td><td>'+f.last+'</td><td class="gdiv">'+f.male+'</td><td>'+f.female+'</td><td class="gdiv"><b>'+fmtMins(f.mins||0)+'</b></td></tr>';
+      if(open) tr+='<tr class="ov-sub"><td colspan="12" style="background:#f7f8fa;padding:8px 12px">'+ovShiftPplLines(f,mod,s.code)+'</td></tr>';
+      return tr; }).join("");
+    body='<p class="meta" style="margin:0 0 6px">'+T.arr+' of '+T.dem+' arrived · '+T.short+' short · '+T.late+' late · '+T.early+' early going. Flagged rows first. <b>Tap a store to see every employee by name.</b></p><div class="ov-scroll"><table class="ov-tbl">'+th+rows+'</table></div>';
   }
-  return '<div class="ov-cashbar"><div><b>'+(guard?"Security guards":"Daily wagers")+'</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><button class="btn btn-line btn-sm" onclick="ovShiftCsv(\''+mod+'\')">⬇ Download CSV</button></div>'
+  return '<div class="ov-cashbar"><div><b>'+(guard?"Security guards":"Daily wagers")+'</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-line btn-sm" onclick="ovShiftCsv(\''+mod+'\')">⬇ Store CSV</button><button class="btn btn-line btn-sm" onclick="ovShiftPeopleCsv(\''+mod+'\')">⬇ Employee CSV</button><button class="btn btn-line btn-sm" onclick="ovTimekeepCsv(\''+mod+'\')">⬇ Timekeeping CSV</button></div></div>'
     +daySel+header+body
-    +'<p class="meta" style="margin:8px 2px 0"><b>Attendance</b> = '+reqW.toLowerCase()+' vs arrived (Short = the gap). <b>Punctuality</b> = late arrivals / early going (15-min grace). <b>Shift coverage</b> = how many arrived in each shift. Tap a store for its full day.</p>';
+    +'<p class="meta" style="margin:8px 2px 0"><b>Attendance</b> = '+reqW.toLowerCase()+' vs arrived (Short = the gap). <b>Punctuality</b> = late arrivals / early going (15-min grace). <b>Shift coverage</b> = how many arrived in each shift. Tap a store row to expand its people name-wise; "Open full day ›" inside jumps to the store.</p>';
 }
 function ovShiftCsv(mod){ const D=OVS[mod+"5"], guard=mod==="guard", reqW=guard?"Requested":"Demanded", s3=guard?"Overnight":"Late";
-  const rows=[["Store","Region","Day","Attendance: "+reqW,"Attendance: Arrived","Attendance: Short","Punctuality: Late","Punctuality: Early","Shift: First","Shift: Mid","Shift: "+s3,"Gender: Male","Gender: Female"]];
+  const rows=[["Store","Region","Day","Attendance: "+reqW,"Attendance: Arrived","Attendance: Short","Punctuality: Late","Punctuality: Early","Shift: First","Shift: Mid","Shift: "+s3,"Gender: Male","Gender: Female","Hours worked"]];
   ovTableStores().filter(s=>D&&D[s.code]).forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=D[s.code][dy];
-    rows.push([s.name,s.region,"Day "+dy,f.dem,f.arr,f.short,f.late,f.early,f.first,f.mid,f.last,f.male,f.female]); } });
+    rows.push([s.name,s.region,"Day "+dy,f.dem,f.arr,f.short,f.late,f.early,f.first,f.mid,f.last,f.male,f.female,fmtMins(f.mins||0)]); } });
   downloadCsv((guard?"guards":"wagers")+"-report.csv",rows); }
 
 
 /* ---- Head-office staff-rating report ---- */
-function ovSetRateDay(dy){ OVRATEDAY=dy; ovRender(); }
+function ovSetRateDay(dy){ OVRATEDAY=dy; OVRATEEXP={}; ovRender(); }
+function ovRateToggle(code){ OVRATEEXP[code]=!OVRATEEXP[code]; ovRender(); }
+function ovRatePplLines(f,code){
+  if(!(f.ppl||[]).length) return '<div class="ov-l" style="color:#6b7280">Filed without named people.</div>';
+  return f.ppl.map(p=>'<div class="ov-l">'+esc(p.n||"(no name)")+' · '+esc(p.md)+' · <b style="color:'+(p.low?'#B3261E':'#1B6B4A')+'">'+esc(p.w)+'</b>'+(p.rm?' · '+esc(p.rm):'')+'</div>').join("")
+    +'<div class="ov-l" style="margin-top:4px"><a style="color:#1f4e8c;cursor:pointer;font-weight:600" onclick="event.stopPropagation();ovOpen(\''+code+'\')">Open full day ›</a></div>';
+}
+function ovRatingPeopleCsv(){
+  const D=OVS.rating5;
+  const rows=[["Store","Cluster manager","Day","Employee","Wager / Guard","Rating","Remark"]];
+  ovTableStores().filter(s=>D&&D[s.code]).forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=D[s.code][dy];
+    (f.ppl||[]).forEach(p=>rows.push([s.name,s.region,"Day "+dy,p.n,p.md,p.w,p.rm])); } });
+  downloadCsv("staff-rating-employee-wise.csv",rows);
+}
 function ovRatingReport(){
   const D=OVS.rating5; const stores=ovTableStores().filter(s=>D&&D[s.code]);
   if(!stores.length) return '<div class="card"><div class="card-body"><span class="meta">No ratings for this scope.</span></div></div>';
@@ -4110,100 +4863,89 @@ function ovRatingReport(){
     let list=stores.map(s=>{ const f=D[s.code][OVRATEDAY]; return {s,f,prio:(f.low>0||f.flagged>0)}; }); list.sort((a,b)=>(b.prio-a.prio));
     const th='<tr><th class="stk">Store</th><th>People rated</th><th>Poor / Fair</th><th>Good+</th><th>Attendance flags</th></tr>';
     const rows=list.map(function(o){ const s=o.s,f=o.f,prio=o.prio;
-      return '<tr class="'+(prio?"ov-prio":"")+'" onclick="ovOpen(\''+s.code+'\')"><td class="stk">'+(prio?'<span class="ov-priotag">flag</span> ':'')+esc(s.name)+' <small style="color:#9aa">'+esc(s.region)+'</small></td><td>'+f.people+'</td><td class="'+(f.low?"cell-bad":"muted")+'">'+f.low+'</td><td>'+f.good+'</td><td class="'+(f.flagged?"cell-warn":"muted")+'">'+f.flagged+'</td></tr>'; }).join("");
-    body='<p class="meta" style="margin:0 0 6px">'+T.people+' rated · '+T.low+' Poor/Fair · '+T.flagged+' with a late/early flag. Flagged rows first.</p><div class="ov-scroll"><table class="ov-tbl">'+th+rows+'</table></div>';
+      const open=OVRATEEXP[s.code];
+      let tr='<tr class="'+(prio?"ov-prio":"")+'" onclick="ovRateToggle(\''+s.code+'\')"><td class="stk">'+(prio?'<span class="ov-priotag">flag</span> ':'')+esc(s.name)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span> <small style="color:#9aa">'+esc(s.region)+'</small></td><td>'+f.people+'</td><td class="'+(f.low?"cell-bad":"muted")+'">'+f.low+'</td><td>'+f.good+'</td><td class="'+(f.flagged?"cell-warn":"muted")+'">'+f.flagged+'</td></tr>';
+      if(open) tr+='<tr class="ov-sub"><td colspan="5" style="background:#f7f8fa;padding:8px 12px">'+ovRatePplLines(f,s.code)+'</td></tr>';
+      return tr; }).join("");
+    body='<p class="meta" style="margin:0 0 6px">'+T.people+' rated · '+T.low+' Poor/Fair · '+T.flagged+' with a late/early flag. Flagged rows first. <b>Tap a store to see every rating by name.</b></p><div class="ov-scroll"><table class="ov-tbl">'+th+rows+'</table></div>';
   }
-  return '<div class="ov-cashbar"><div><b>Staff rating</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><button class="btn btn-line btn-sm" onclick="ovRatingCsv()">⬇ Download CSV</button></div>'
+  return '<div class="ov-cashbar"><div><b>Staff rating</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><div style="display:flex;gap:6px"><button class="btn btn-line btn-sm" onclick="ovRatingCsv()">⬇ Store CSV</button><button class="btn btn-line btn-sm" onclick="ovRatingPeopleCsv()">⬇ Employee CSV</button></div></div>'
     +daySel+header+body
-    +'<p class="meta" style="margin:8px 2px 0"><b>Poor / Fair</b> = ratings that need a written reason. <b>Attendance flags</b> = the late-arrival / early-going flags carried in from wagers & guards. Tap a store for its full day.</p>';
+    +'<p class="meta" style="margin:8px 2px 0"><b>Poor / Fair</b> = ratings that need a written reason. <b>Attendance flags</b> = the late-arrival / early-going flags carried in from wagers & guards. Tap a store row to expand its ratings name-wise; "Open full day ›" inside jumps to the store.</p>';
 }
 function ovRatingCsv(){ const D=OVS.rating5; const rows=[["Store","Region","Day","People rated","Poor/Fair","Good+","Attendance flags"]];
   ovTableStores().filter(s=>D&&D[s.code]).forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=D[s.code][dy]; rows.push([s.name,s.region,"Day "+dy,f.people,f.low,f.good,f.flagged]); } }); downloadCsv("rating-report.csv",rows); }
 
 /* ---- Head-office event-budget report ---- */
 function ovSetBudDay(dy){ OVBUDDAY=dy; ovRender(); }
-function ovBudPlan(){ return {food:.12,wagersRetail:.25,wagersFragrance:.18,janitorial:.08,tentage:.20,valet:.12,water:.05}; }
-function ovBudSpendMix(){ return {food:.14,wagersRetail:.22,wagersFragrance:.16,janitorial:.10,tentage:.22,valet:.11,water:.05}; }
-function ovBudGroups(){ return [["Food",["food"]],["Daily wagers",["wagersRetail","wagersFragrance"]],["Facilities",["janitorial","tentage","valet","water"]]]; }
-function ovBudLabel(k,short){ const map={food:"Food",wagersRetail:short?"Retail":"Daily wagers — Retail",wagersFragrance:short?"Fragrance":"Daily wagers — Fragrance",janitorial:short?"Janitorial":"Extra janitorial",tentage:short?"Tentage":"Tentage and chairs",valet:short?"Valet":"Valet parking",water:"Water"}; return map[k]||k; }
+function ovBudGroups(){ return [["Food",["food"]],["Facilities",["janitorial","tentage","valet","water"]]]; }
+function ovBudLabel(k,short){ const map={food:"Food",janitorial:short?"Janitorial":"Extra janitorial",tentage:short?"Tentage":"Tentage and chairs",valet:short?"Valet":"Valet parking",water:"Water"}; return map[k]||k; }
 function ovPct(sp,al){ return al>0?Math.round(sp/al*100)+"%":"—"; }
-function ovBudCatSummary(totAlloc,totSpent){
-  const PL=ovBudPlan(), SM=ovBudSpendMix(); let rows="";
-  ovBudGroups().forEach(function(g){ const name=g[0],keys=g[1]; let al=0,sp=0;
-    keys.forEach(function(k,i){ const a=Math.round(totAlloc*PL[k]), p=Math.round(totSpent*SM[k]), r=a-p; al+=a; sp+=p;
-      rows+='<tr'+(i===0?' class="grp-start"':'')+'><td class="stk">'+(i===0?esc(name):'')+'</td><td>'+esc(ovBudLabel(k))+'</td><td>'+pkr(a)+'</td><td>'+pkr(p)+'</td><td class="'+(r<0?"cell-bad":"")+'">'+(r<0?"OVER "+pkr(-r):pkr(r))+'</td><td class="'+(r<0?"cell-bad":"muted")+'">'+ovPct(p,a)+'</td></tr>'; });
-    const r=al-sp; rows+='<tr class="ov-subtot"><td class="stk"></td><td>'+esc(name)+' subtotal</td><td>'+pkr(al)+'</td><td>'+pkr(sp)+'</td><td class="'+(r<0?"cell-bad":"")+'">'+(r<0?"OVER "+pkr(-r):pkr(r))+'</td><td>'+ovPct(sp,al)+'</td></tr>'; });
-  const tr=totAlloc-totSpent;
-  return '<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Subsection</th><th>Category</th><th>Allocated</th><th>Spent</th><th>Remaining</th><th>%</th></tr>'+rows
-    +'<tr class="ov-tot"><td class="stk">TOTAL</td><td></td><td>'+pkr(totAlloc)+'</td><td>'+pkr(totSpent)+'</td><td class="'+(tr<0?"cell-bad":"")+'">'+(tr<0?"OVER "+pkr(-tr):pkr(tr))+'</td><td>'+ovPct(totSpent,totAlloc)+'</td></tr></table></div>';
+/* REAL submitted category values — never assumed percentages */
+function ovBudCatSummary(stores,totSpent){
+  const cat={}; let catTotal=0;
+  const shown={}; ovBudGroups().forEach(function(g){ g[1].forEach(function(k){ shown[k]=true; }); });
+  stores.forEach(function(st){ const c=OVS.budCats[st.code]||{};
+    Object.keys(c).forEach(function(k){ if(!shown[k]) return; cat[k]=(cat[k]||0)+c[k]; catTotal+=c[k]; }); });
+  if(!catTotal) return '<div class="card"><div class="card-body"><span class="meta">No category breakdown submitted yet.</span></div></div>';
+  let rows="";
+  ovBudGroups().forEach(function(g){ const name=g[0],keys=g[1]; let sp=0;
+    keys.forEach(function(k,i){ const p=cat[k]||0; sp+=p;
+      rows+='<tr'+(i===0?' class="grp-start"':'')+'><td class="stk">'+(i===0?esc(name):'')+'</td><td>'+esc(ovBudLabel(k))+'</td><td>'+pkr(p)+'</td><td class="muted">'+ovPct(p,catTotal)+'</td></tr>'; });
+    rows+='<tr class="ov-subtot"><td class="stk"></td><td>'+esc(name)+' subtotal</td><td>'+pkr(sp)+'</td><td>'+ovPct(sp,catTotal)+'</td></tr>'; });
+  return '<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Subsection</th><th>Category</th><th>Spent (actual)</th><th>% of spend</th></tr>'+rows
+    +'<tr class="ov-tot"><td class="stk">TOTAL</td><td></td><td>'+pkr(catTotal)+'</td><td>100%</td></tr></table></div>';
 }
 function ovBudStoreTable(list){
-  const PL=ovBudPlan(), SM=ovBudSpendMix();
-  const cats=[["food","Food"],["wagersRetail","Retail"],["wagersFragrance","Fragr."],["janitorial","Janit."],["tentage","Tentage"],["valet","Valet"],["water","Water"]];
+  const cats=[["food","Food"],["janitorial","Janit."],["tentage","Tentage"],["valet","Valet"],["water","Water"]];
   let h1='<tr><th class="stk" rowspan="2">Store</th>';
-  cats.forEach(function(c){ h1+='<th class="ov-grp gdiv" colspan="2">'+esc(c[1])+'</th>'; });
+  cats.forEach(function(c){ h1+='<th class="ov-grp gdiv">'+esc(c[1])+'</th>'; });
   h1+='<th class="ov-grp gdiv" colspan="3">Total</th></tr>';
-  let h2='<tr>';
-  cats.forEach(function(){ h2+='<th class="gdiv">Alloc</th><th>Spent</th>'; });
+  let h2='<tr>'; cats.forEach(function(){ h2+='<th class="gdiv">Spent</th>'; });
   h2+='<th class="gdiv">Alloc</th><th>Spent</th><th>%</th></tr>';
-  const rows=list.map(function(o){ const s=o.s,f=o.f,prio=o.prio; let tds='';
-    cats.forEach(function(c){ const a=Math.round(f.alloc*PL[c[0]]), p=Math.round(f.toDate*SM[c[0]]);
-      tds+='<td class="gdiv">'+pkr(a)+'</td><td class="'+(p>a?"cell-bad":"")+'">'+pkr(p)+'</td>'; });
-    const rem=f.alloc-f.toDate;
-    tds+='<td class="gdiv">'+pkr(f.alloc)+'</td><td class="'+(rem<0?"cell-bad":"")+'">'+pkr(f.toDate)+'</td><td class="'+(rem<0?"cell-bad":"muted")+'">'+ovPct(f.toDate,f.alloc)+'</td>';
-    return '<tr class="'+(prio?"ov-prio":"")+'" onclick="ovOpen(\''+s.code+'\')"><td class="stk">'+(prio?'<span class="ov-priotag">over</span> ':'')+esc(s.name)+' <small style="color:#9aa">'+esc(s.region)+'</small></td>'+tds+'</tr>'; }).join("");
-  // column totals row
-  let tt={}; cats.forEach(c=>tt[c[0]]={a:0,p:0}); let TA=0,TP=0;
-  list.forEach(function(o){ const f=o.f; cats.forEach(c=>{ tt[c[0]].a+=Math.round(f.alloc*PL[c[0]]); tt[c[0]].p+=Math.round(f.toDate*SM[c[0]]); }); TA+=f.alloc; TP+=f.toDate; });
+  const rows=list.map(function(o){ const s2=o.s,f=o.f,prio=o.prio; const cc=OVS.budCats[s2.code]||{}; let tds='';
+    cats.forEach(function(c){ tds+='<td class="gdiv">'+pkr(cc[c[0]]||0)+'</td>'; });
+    const noAlloc=!f.alloc;
+    tds+='<td class="gdiv">'+(noAlloc?'<span class="muted">not configured</span>':pkr(f.alloc))+'</td>'
+      +'<td class="'+(!noAlloc&&f.remaining<0?"cell-bad":"")+'">'+pkr(f.toDate)+'</td>'
+      +'<td class="'+(!noAlloc&&f.remaining<0?"cell-bad":"muted")+'">'+(noAlloc?"—":ovPct(f.toDate,f.alloc))+'</td>';
+    return '<tr class="'+(prio?"ov-prio":"")+'" onclick="ovOpen(\''+s2.code+'\')"><td class="stk">'+(prio?'<span class="ov-priotag">over</span> ':'')+esc(s2.name)+' <small style="color:#9aa">'+esc(s2.region)+'</small></td>'+tds+'</tr>'; }).join("");
+  let tt={}; cats.forEach(c=>tt[c[0]]=0); let TA=0,TP=0;
+  list.forEach(function(o){ const cc=OVS.budCats[o.s.code]||{}; cats.forEach(c=>{ tt[c[0]]+=cc[c[0]]||0; }); TA+=o.f.alloc||0; TP+=o.f.toDate; });
   let tf='<tr class="ov-tot"><td class="stk">ALL '+list.length+' STORES</td>';
-  cats.forEach(c=>{ tf+='<td class="gdiv">'+pkr(tt[c[0]].a)+'</td><td class="'+(tt[c[0]].p>tt[c[0]].a?"cell-bad":"")+'">'+pkr(tt[c[0]].p)+'</td>'; });
-  tf+='<td class="gdiv">'+pkr(TA)+'</td><td class="'+(TP>TA?"cell-bad":"")+'">'+pkr(TP)+'</td><td>'+ovPct(TP,TA)+'</td></tr>';
+  cats.forEach(c=>{ tf+='<td class="gdiv">'+pkr(tt[c[0]])+'</td>'; });
+  tf+='<td class="gdiv">'+pkr(TA)+'</td><td class="'+(TP>TA&&TA?"cell-bad":"")+'">'+pkr(TP)+'</td><td>'+(TA?ovPct(TP,TA):"—")+'</td></tr>';
   return '<div class="ov-scroll"><table class="ov-tbl">'+h1+h2+rows+tf+'</table></div>';
 }
-function ovSetBudDay(dy){ OVBUDDAY=dy; ovRender(); }
-function ovBudPlan(){ return {food:.12,wagersRetail:.25,wagersFragrance:.18,janitorial:.08,tentage:.20,valet:.12,water:.05}; }
-function ovBudSpendMix(){ return {food:.14,wagersRetail:.22,wagersFragrance:.16,janitorial:.10,tentage:.22,valet:.11,water:.05}; }
-function ovBudGroups(){ return [["Food",["food"]],["Daily wagers",["wagersRetail","wagersFragrance"]],["Facilities",["janitorial","tentage","valet","water"]]]; }
-function ovBudLabel(k,short){ const map={food:"Food",wagersRetail:short?"Retail":"Daily wagers — Retail",wagersFragrance:short?"Fragrance":"Daily wagers — Fragrance",janitorial:short?"Janitorial":"Extra janitorial",tentage:short?"Tentage":"Tentage and chairs",valet:short?"Valet":"Valet parking",water:"Water"}; return map[k]||k; }
-function ovPct(sp,al){ return al>0?Math.round(sp/al*100)+"%":"—"; }
-function ovBudCatSummary(totAlloc,totSpent){
-  const PL=ovBudPlan(), SM=ovBudSpendMix(); let rows="";
-  ovBudGroups().forEach(function(g){ const name=g[0],keys=g[1]; let al=0,sp=0;
-    keys.forEach(function(k,i){ const a=Math.round(totAlloc*PL[k]), p=Math.round(totSpent*SM[k]), r=a-p; al+=a; sp+=p;
-      rows+='<tr'+(i===0?' class="grp-start"':'')+'><td class="stk">'+(i===0?esc(name):'')+'</td><td>'+esc(ovBudLabel(k))+'</td><td>'+pkr(a)+'</td><td>'+pkr(p)+'</td><td class="'+(r<0?"cell-bad":"")+'">'+(r<0?"OVER "+pkr(-r):pkr(r))+'</td><td class="'+(r<0?"cell-bad":"muted")+'">'+ovPct(p,a)+'</td></tr>'; });
-    const r=al-sp; rows+='<tr class="ov-subtot"><td class="stk"></td><td>'+esc(name)+' subtotal</td><td>'+pkr(al)+'</td><td>'+pkr(sp)+'</td><td class="'+(r<0?"cell-bad":"")+'">'+(r<0?"OVER "+pkr(-r):pkr(r))+'</td><td>'+ovPct(sp,al)+'</td></tr>'; });
-  const tr=totAlloc-totSpent;
-  return '<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Subsection</th><th>Category</th><th>Allocated</th><th>Spent</th><th>Remaining</th><th>%</th></tr>'+rows
-    +'<tr class="ov-tot"><td class="stk">TOTAL</td><td></td><td>'+pkr(totAlloc)+'</td><td>'+pkr(totSpent)+'</td><td class="'+(tr<0?"cell-bad":"")+'">'+(tr<0?"OVER "+pkr(-tr):pkr(tr))+'</td><td>'+ovPct(totSpent,totAlloc)+'</td></tr></table></div>';
-}
-function ovSetBudDay(dy){ OVBUDDAY=dy; ovRender(); }
 function ovBudgetReport(){
   const D=OVS.budget5; const stores=ovTableStores().filter(s=>D&&D[s.code]);
   if(!stores.length) return '<div class="card"><div class="card-body"><span class="meta">No budget filed for this scope.</span></div></div>';
-  let alloc=0,spent=0,over=0;
-  stores.forEach(s=>{ const f=D[s.code][5]; alloc+=f.alloc; spent+=f.toDate; if(f.remaining<0)over++; });
+  let alloc=0,spent=0,over=0,unconf=0;
+  stores.forEach(s=>{ const f=D[s.code][5]; alloc+=f.alloc||0; spent+=f.toDate;
+    if(!f.alloc) unconf++; else if(f.remaining<0) over++; });
   const remaining=alloc-spent;
   const tile=(lab,val,red)=>'<div class="ov-tile"><span>'+lab+'</span><b class="'+(red?"ov-red":"")+'">'+val+'</b></div>';
   const header='<div class="ov-dephdr"><div class="ov-dephdr-t">Event budget — whole event · '+stores.length+' stores</div><div class="ov-tiles">'
-    +tile("Allocated (event)",pkr(alloc))+tile("Spent (total)",pkr(spent))+tile("Remaining",remaining<0?"OVER "+pkr(-remaining):pkr(remaining),remaining<0)+tile("Utilisation",ovPct(spent,alloc),remaining<0)+tile("Stores over budget",over,over>0)+'</div></div>';
+    +tile("Allocated (event)",pkr(alloc))+tile("Spent (total)",pkr(spent))+tile("Remaining",remaining<0?"OVER "+pkr(-remaining):pkr(remaining),remaining<0)+tile("Utilisation",ovPct(spent,alloc),remaining<0)+tile("Stores over budget",over,over>0)+(unconf?tile("Budget not configured",unconf,true):"")+'</div></div>';
   // day-wise utilisation (spend per day + cumulative + cumulative % of the event budget)
   let du='<p class="ov-subhdr">Day-wise utilisation — of the event budget</p><div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Sale day</th><th>Spend that day</th><th>Cumulative spent</th><th>Utilisation %</th></tr>';
   for(let dy=1;dy<=5;dy++){ let ds=0,cum=0; stores.forEach(s=>{ ds+=D[s.code][dy].daySpend; cum+=D[s.code][dy].toDate; });
     du+='<tr><td class="stk">Day '+dy+'</td><td>'+pkr(ds)+'</td><td>'+pkr(cum)+'</td><td class="'+(cum>alloc?"cell-bad":"muted")+'">'+ovPct(cum,alloc)+'</td></tr>'; }
   du+='<tr class="ov-tot"><td class="stk">EVENT TOTAL</td><td>'+pkr(spent)+'</td><td>'+pkr(spent)+'</td><td class="'+(spent>alloc?"cell-bad":"")+'">'+ovPct(spent,alloc)+'</td></tr></table></div>';
-  const catSub='<p class="ov-subhdr">Spend by category — Allocated · Spent · Remaining · % (whole event)</p>'+ovBudCatSummary(alloc,spent);
-  let list=stores.map(s=>{ const f=D[s.code][5]; return {s,f,prio:(f.remaining<0)}; }); list.sort((a,b)=>(b.prio-a.prio));
+  const catSub='<p class="ov-subhdr">Spend by category — actual submitted values (whole event)</p>'+ovBudCatSummary(stores,spent);
+  let list=stores.map(s=>{ const f=D[s.code][5]; return {s,f,prio:(f.alloc&&f.remaining<0)}; }); list.sort((a,b)=>(b.prio-a.prio));
   const byStore='<p class="ov-subhdr">By store — Allocated &amp; Spent per category (whole event)</p>'+ovBudStoreTable(list);
   return '<div class="ov-cashbar"><div><b>Event budget</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><button class="btn btn-line btn-sm" onclick="ovBudgetCsv()">⬇ Download CSV</button></div>'
     +header+du+catSub+byStore
     +'<p class="meta" style="margin:8px 2px 0">The budget is allocated for the <b>whole event</b>, not per day — so <b>Allocated vs Spent</b> is compared on the total. <b>Day-wise utilisation</b> shows how that budget was consumed across the days (cumulative % of the event budget). A category or store over its allocation shows red.</p>';
 }
-function ovBudgetCsv(){ const D=OVS.budget5, PL=ovBudPlan(), SM=ovBudSpendMix(), cats=CONFIG.BUDGET_CATEGORIES;
-  const head=["Store","Region","Day","Allocated (event)","Spent to date","Remaining","Utilisation %"];
-  cats.forEach(c=>{ head.push(c.label+" — allocated"); head.push(c.label+" — spent"); });
+function ovBudgetCsv(){ const D=OVS.budget5, cats=CONFIG.BUDGET_CATEGORIES;
+  const head=["Store","Cluster manager","Allocated (event)","Spent (event)","Remaining","Utilisation %"];
+  cats.forEach(c=>head.push(c.label+" — spent (actual)"));
   const rows=[head];
-  ovTableStores().filter(s=>D&&D[s.code]).forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=D[s.code][dy]; const r=[s.name,s.region,"Day "+dy,f.alloc,f.toDate,f.remaining,(f.alloc?Math.round(f.toDate/f.alloc*100):0)];
-    cats.forEach(c=>{ r.push(Math.round(f.alloc*(PL[c.key]||0))); r.push(Math.round(f.toDate*(SM[c.key]||0))); }); rows.push(r); } });
+  ovTableStores().filter(s2=>D&&D[s2.code]).forEach(s2=>{ const f=D[s2.code][5]; const cc=OVS.budCats[s2.code]||{};
+    const r=[s2.name,s2.region,f.alloc||"not configured",f.toDate,(f.alloc?f.alloc-f.toDate:""),(f.alloc?Math.round(f.toDate/f.alloc*100)+"%":"")];
+    cats.forEach(c=>r.push(cc[c.key]||0)); rows.push(r); });
   downloadCsv("budget-report.csv",rows); }
 
 /* ================= review ================= */
@@ -4219,304 +4961,6 @@ function startReview(){
     OVFILTER = FILT[TAB] || "all"; OVOPEN = null; ovRender();
   });
   ovStart("hq");
-}
-async function loadReview(){
-  note($("revMsg"),"Loading…","info");
-  try{
-    const url = CONFIG.API_URL + "?action=all&event=" + encodeURIComponent($("revEv").value)
-              + "&token=" + encodeURIComponent(CONFIG.REVIEW_CODE);
-    const res = await fetch(url);
-    const out = await res.json();
-    if(!out.ok){ note($("revMsg"),"Could not load: "+(out.error||"unknown error"),"bad"); return; }
-    RAW = { till: out.till||[], pick: out.pick||[], day: out.day||[], fake: out.fake||[],
-            bank: out.bank||[], bankPeople: out.bankPeople||[],
-            shift: out.shift||[], shiftPeople: out.shiftPeople||[], budget: out.budget||[],
-            performance: out.performance||[] };
-    $("revMsg").innerHTML = "";
-    render();
-  }catch(e){
-    note($("revMsg"),"Could not reach the data sheet. Check the API URL in the config block.","bad");
-  }
-}
-/* Regenerates the flat dashboard and audit_flags tabs in the Google Sheet.
-   Those two tabs are what a chart or Looker Studio report should point at. */
-function render(){
-  $("revPane").innerHTML = TAB==="A" ? completionHTML()
-                         : TAB==="B" ? varianceHTML()
-                         : TAB==="C" ? exceptionsHTML()
-                         : budgetHTML();
-}
-
-function budgetHTML(){
-  const rows = RAW.budget || [];
-  if(!rows.length) return '<p class="meta">No budget spend recorded yet.</p>';
-  const byStore = {};
-  rows.forEach(r => {
-    const b = byStore[r.store] = byStore[r.store] || {
-      name:r.storeName, region:r.region, allocated:"", spent:0, days:{}, reasons:[] };
-    if(r.allocated !== "" && r.allocated != null) b.allocated = Number(r.allocated);
-    b.spent += Number(r.dayTotal||0);
-    b.days[r.day] = Number(r.dayTotal||0);
-    if(r.overspendReason) b.reasons.push("Day "+r.day+": "+r.overspendReason);
-    CONFIG.BUDGET_CATEGORIES.forEach(c => {
-      b[c.key] = (b[c.key]||0) + Number((r.categories||{})[c.key]||0);
-    });
-  });
-  const ev = CONFIG.EVENTS.find(e => e.id === $("revEv").value) || CONFIG.EVENTS[0];
-  const days = (ev.days||[]).map(d => String(d.day));
-
-  let h = '<p class="lab" style="margin-bottom:8px">Budget position by store</p>';
-  h += '<table class="matrix"><thead><tr><th>Store</th><th class="c">Allocated</th>';
-  days.forEach(d => h += '<th class="c">Day '+esc(d)+'</th>');
-  h += '<th class="c">Spent</th><th class="c">Remaining</th><th class="c">Used</th></tr></thead><tbody>';
-  Object.keys(byStore).forEach(code => {
-    const b = byStore[code];
-    const left = b.allocated === "" ? "" : b.allocated - b.spent;
-    const pct  = b.allocated === "" || !b.allocated ? "" : Math.round(b.spent/b.allocated*100)+"%";
-    h += '<tr><td>'+esc(b.name)+'</td><td class="c">'+(b.allocated===""?"not set":fmt(b.allocated))+'</td>';
-    days.forEach(d => h += '<td class="c">'+(b.days[d]==null ? "—" : fmt(b.days[d]))+'</td>');
-    h += '<td class="c">'+fmt(b.spent)+'</td>'
-       + '<td class="c '+(left!=="" && left<0 ? "num-neg" : "")+'">'+(left===""?"—":fmt(left))+'</td>'
-       + '<td class="c">'+esc(pct||"—")+'</td></tr>';
-  });
-  h += '</tbody></table>';
-
-  h += '<p class="lab" style="margin:20px 0 8px">Spend by category, whole event</p>';
-  h += '<table class="matrix"><thead><tr><th>Store</th>'
-     + CONFIG.BUDGET_CATEGORIES.map(c => '<th class="c">'+esc(c.label)+'</th>').join("")
-     + '<th class="c">Total</th></tr></thead><tbody>';
-  Object.keys(byStore).forEach(code => {
-    const b = byStore[code];
-    h += '<tr><td>'+esc(b.name)+'</td>'
-       + CONFIG.BUDGET_CATEGORIES.map(c => '<td class="c">'+fmt(b[c.key]||0)+'</td>').join("")
-       + '<td class="c">'+fmt(b.spent)+'</td></tr>';
-  });
-  return h + '</tbody></table>';
-}
-
-function completionHTML(){
-  const ev = CONFIG.EVENTS.find(e => e.id === $("revEv").value) || CONFIG.EVENTS[0];
-  const days = (ev.days||[]).map(d => String(d.day));
-  const k = (s,d) => s+"|"+d;
-  const pickN = {}, dayIn = {};
-  const noVaultDays = {};
-  RAW.pick.forEach(r => {
-    const key = k(r.store,r.day);
-    if(r.vaultUnavailable === "Yes"){ noVaultDays[key] = true; return; }
-    (pickN[key] = pickN[key] || []).push(Number(r.seq));
-  });
-  RAW.day.forEach(r => dayIn[k(r.store,r.day)] = r);
-  const depIn = {};
-  (RAW.bank||[]).forEach(r => depIn[k(r.store,r.day)] = r);
-  const ord = n => n===1 ? "1st" : n===2 ? "2nd" : n+"th";
-  let h = '<table class="matrix"><thead><tr><th>Store</th><th>Region</th>';
-  days.forEach(d => h += '<th class="c">Day '+esc(d)+'</th>');
-  h += '</tr></thead><tbody>';
-  CONFIG.STORES.forEach(s => {
-    h += '<tr><td>'+esc(s.name)+'</td><td>'+esc(s.region)+'</td>';
-    days.forEach(d => {
-      const arr = pickN[k(s.code,d)]||[], de = dayIn[k(s.code,d)];
-      const slots = arr.slice().sort((a,b)=>a-b).map(ord).join(" + ");
-      let cls="p-miss", txt="missing";
-      if(arr.length && de){ cls="p-in";   txt = slots+" · day-end in"; }
-      else if(arr.length){ cls="p-part"; txt = slots+" · no day-end"; }
-      else if(de){        cls="p-part"; txt = "day-end · no pick-up"; }
-      if(noVaultDays[k(s.code,d)]) txt = (arr.length ? txt : "no vault") + (arr.length ? " · no vault" : "");
-      if(depIn[k(s.code,d)]) txt += " · banked";
-      h += '<td class="c"><span class="pill '+cls+'">'+esc(txt)+'</span></td>';
-    });
-    h += '</tr>';
-  });
-  return h + '</tbody></table>';
-}
-
-function varianceHTML(){
-  const rows = RAW.till.filter(r => Number(r.variance) !== 0)
-    .sort((a,b) => Math.abs(Number(b.variance)) - Math.abs(Number(a.variance)));
-  let h = '<p class="lab" style="margin-bottom:8px">Every non-zero till variance ('+rows.length+')</p>';
-  if(!rows.length) return h + '<p class="meta">No variance recorded.</p>';
-  h += '<table class="matrix"><thead><tr><th>Store</th><th>Day</th><th>Till</th><th>Cashier</th><th>Payroll</th>'
-     + '<th>Result</th><th class="c">Amount</th><th>Remarks</th></tr></thead><tbody>';
-  rows.forEach(r => {
-    const v = Number(r.variance);
-    const label = r.result || (v<0 ? "Short" : "Over");
-    h += '<tr><td>'+esc(r.storeName)+'</td><td>'+esc(r.day)+'</td><td>'+esc(r.pos)+'</td><td>'+esc(r.cashier)
-       + '</td><td>'+esc(r.payroll)+'</td><td class="'+(v<0?"num-neg":"num-pos")+'">'+esc(label)+'</td>'
-       + '<td class="c '+(v<0?"num-neg":"num-pos")+'">'+fmt(Math.abs(v))+'</td>'
-       + '<td>'+esc(r.remarks||"—")+'</td></tr>';
-  });
-  return h + '</tbody></table>';
-}
-
-function exceptionsHTML(){
-  const single   = RAW.pick.filter(r => r.vaultUnavailable !== "Yes" && r.countedByTwo !== "Yes");
-  const noVault  = RAW.pick.filter(r => r.vaultUnavailable === "Yes");
-  const noRec    = RAW.day.filter(r => r.reconciled !== "Yes");
-  const mismatch = RAW.day.filter(r =>
-      Math.abs(Number(r.declaredShortage)||0) !== Number(r.computedShortage||0) ||
-      Math.abs(Number(r.declaredExcess)||0)   !== Number(r.computedExcess||0));
-  const cardGap  = RAW.day.filter(r => r.cardDifference !== "" && r.cardDifference != null &&
-                                       Number(r.cardDifference) !== 0);
-  const overnight = RAW.day.filter(r => r.secondPickupDone === "No");
-  const modName  = m => m === "guard" ? "Security guards" : m === "wager" ? "Daily wagers" : m;
-  const lowScore = (RAW.performance||[]).filter(r => Number(r.score) > 0 && Number(r.score) <= 2)
-      .sort((a,b) => Number(a.score) - Number(b.score));
-  const overspent = (RAW.budget||[]).filter(r => r.remaining !== "" && r.remaining != null && Number(r.remaining) < 0);
-  const shortfall = (RAW.shift||[]).filter(r => Number(r.shortfall||0) > 0);
-  const lineGap   = (RAW.shift||[]).filter(r => String(r.peopleCount) !== String(r.totalArrived));
-  const lateBank = (RAW.bank||[]).filter(r => r.daysHeld !== "" && r.daysHeld != null && Number(r.daysHeld) > 1);
-  const depGap   = (RAW.bank||[]).filter(r => r.variance !== "" && r.variance != null && Number(r.variance) !== 0);
-  const fakes    = (RAW.fake||[]).slice()
-      .sort((a,b) => Number(b.value||0) - Number(a.value||0));
-  const offDay   = RAW.day.filter(r => r.dayMatch === "No")
-      .concat(RAW.pick.filter(r => r.dayMatch === "No"));
-  const cashGap  = RAW.day.filter(r => r.cashDifference !== "" && r.cashDifference != null &&
-      Number(r.cashDifference) !== (Number(r.computedExcess||0) - Number(r.computedShortage||0)));
-
-  function tbl(title, rows, cols, get){
-    let h = '<p class="lab" style="margin:18px 0 8px">'+esc(title)+' ('+rows.length+')</p>';
-    if(!rows.length) return h + '<p class="meta">None.</p>';
-    h += '<table class="matrix"><thead><tr>' + cols.map(c => '<th>'+esc(c)+'</th>').join("") + '</tr></thead><tbody>';
-    rows.forEach(r => h += '<tr>' + get(r).map(v => '<td>'+esc(v)+'</td>').join("") + '</tr>');
-    return h + '</tbody></table>';
-  }
-  return tbl("Performance scored 1 or 2", lowScore,
-             ["Store","Day","Section","Person","Criterion","Score","Remark"],
-             r => [r.storeName, r.day, modName(r.module), r.name, r.criterion, r.score, r.remark||"—"])
-       + tbl("Event budget overspent", overspent,
-             ["Store","Day","Allocated","Spent to date","Over by","Reason"],
-             r => [r.storeName, r.day, r.allocated, r.spentToDate,
-                   fmt(Math.abs(Number(r.remaining))), r.overspendReason||"—"])
-       + tbl("Fewer people arrived than requested", shortfall,
-             ["Store","Day","Section","Requested","Arrived","Short by","Reason"],
-             r => [r.storeName, r.day, modName(r.module), r.totalRequested, r.totalArrived,
-                   r.shortfall, r.shortfallReason||"—"])
-       + tbl("Attendance lines not matching the arrived count", lineGap,
-             ["Store","Day","Section","Arrived","Lines filed"],
-             r => [r.storeName, r.day, modName(r.module), r.totalArrived, r.peopleCount])
-       + tbl("Cash held in the safe overnight", overnight,
-             ["Store","Day","Email sent to Finance","Cash at store","Manager"],
-             r => [r.storeName, r.day, r.emailToFinance||"—", r.cashAtStore, r.managerName])
-       + tbl("Pick-ups not done because the vault was not available", noVault,
-             ["Store","Day","Pick-up","Notes"],
-             r => [r.storeName, r.day, r.seqLabel || r.seq, r.notes||"—"])
-       + tbl("Cash banked later than the next day", lateBank,
-             ["Store","Sale day","Sale date","Deposited on","Days held","Deposited"],
-             r => [r.storeName, r.day, r.saleDayDate, r.depositDate, r.daysHeld, r.cashDeposited])
-       + tbl("Bank deposit not matching the system figure", depGap,
-             ["Store","Sale day","Deposited on","In system","Deposited","Variance","Reason"],
-             r => [r.storeName, r.day, r.depositDate, r.cashInSystem, r.cashDeposited, r.variance, r.varianceReason||"—"])
-       + tbl("Fake notes received", fakes,
-             ["Store","Day","Denomination","Notes","Value","Employee","Payroll"],
-             r => [r.storeName, r.day, r.denomination, r.quantity, r.value, r.employee, r.payroll])
-       + tbl("Entries recorded against a day other than the day they were submitted", offDay,
-             ["Store","Day","Day date","Submitted on","Chosen how","Reason","Entered by"],
-             r => [r.storeName, r.day, r.dayDate||"—", r.serverDate||"—",
-                   r.daySource||"—", r.dayReason||"—", r.enteredBy])
-       + tbl("Pick-ups not counted by a manager and a sales staff", single,
-             ["Store","Day","Pick-up","Time","Entered by"],
-             r => [r.storeName, r.day, r.seqLabel || r.seq, r.time||"—", r.enteredBy])
-       + tbl("Day-end not signed off as reconciled", noRec, ["Store","Day","Entered by"],
-             r => [r.storeName, r.day, r.enteredBy])
-       + tbl("Day totals not matching till lines", mismatch,
-             ["Store","Day","Declared shortage","Till shortage","Declared excess","Till excess"],
-             r => [r.storeName, r.day, r.declaredShortage, r.computedShortage, r.declaredExcess, r.computedExcess])
-       + tbl("Cash reconciliation not agreeing with till lines", cashGap,
-             ["Store","Day","In system","Handed over","At store","Cash difference","Till net"],
-             r => [r.storeName, r.day, r.cashInSystem, r.cashHandedOver, r.cashAtStore,
-                   r.cashDifference, Number(r.computedExcess||0) - Number(r.computedShortage||0)])
-       + tbl("Card sales not agreeing with settlement", cardGap,
-             ["Store","Day","Card in system","Settled","Difference","Remarks"],
-             r => [r.storeName, r.day, r.cardInSystem, r.cardSettled, r.cardDifference, r.cardRemarks||"—"]);
-}
-
-function exportCsv(){
-  const head = ["Type","Store code","Store","Region","Event","Day","Day date","Chosen how","Day reason",
-    "Till","Cashier","Payroll","Result","Amount","Variance","Till remarks",
-    "Fake note denomination","Fake note count","Fake note value","Fake note employee","Fake note payroll",
-    "Pick-up no","Pick-up slot","Vault not available","Pick-up time","Counted by staff and manager",
-    "Counting sales staff","Staff payroll","Counting manager","Manager payroll",
-    "Deposit date","Sale day date","Days held","Cash in system for day","Cash deposited",
-    "Deposit variance","Variance reason","People who banked",
-    "Section","Shift 1 from","Shift 1 to","Shift 1 requested","Shift 1 arrived",
-    "Shift 2 from","Shift 2 to","Shift 2 requested","Shift 2 arrived",
-    "Total requested","Total arrived","Shortfall","Shortfall reason","Lines filed",
-    "Person name","Gender","Company","Contact","Time in","Time out",
-    "Criterion","Score","Person average","Performance remark",
-    "Budget allocated","Day spend","Spent to date","Budget remaining","Overspend reason",
-    "Cash in system D365","Cash handed over","CIT vendor","Cash at store","Cash accounted for","Cash difference",
-    "Card sales in system D365","Card settled","Card difference","Card remarks",
-    "Second pick-up done","Email to Finance",
-    "Declared shortage","Declared excess","Till shortage","Till excess","Reconciled",
-    "Day-end staff","Day-end staff payroll","Day-end manager","Day-end manager payroll",
-    "Entered by","Submitted at"];
-  CONFIG.BUDGET_CATEGORIES.forEach(c => head.splice(head.indexOf("Day spend"), 0, "Spent on " + c.label));
-  const idx = {}; head.forEach((h,i) => idx[h] = i);
-  const modName = m => m === "guard" ? "Security guards" : m === "wager" ? "Daily wagers" : m;
-  const row = (type, r, pairs) => {
-    const a = new Array(head.length).fill("");
-    const put = (k,v) => { if(v != null && v !== "") a[idx[k]] = v; };
-    put("Type", type); put("Store code", r.store); put("Store", r.storeName); put("Region", r.region);
-    put("Event", r.event); put("Day", r.day); put("Day date", r.dayDate);
-    put("Chosen how", r.daySource); put("Day reason", r.dayReason);
-    put("Entered by", r.enteredBy); put("Submitted at", r.submittedAt);
-    Object.keys(pairs).forEach(k => put(k, pairs[k]));
-    return a;
-  };
-  const rows = [head];
-  RAW.till.forEach(r => rows.push(row("Till", r, {
-    "Till":r.pos, "Cashier":r.cashier, "Payroll":r.payroll, "Result":r.result,
-    "Amount":r.amount, "Variance":r.variance, "Till remarks":r.remarks })));
-  (RAW.fake||[]).forEach(r => rows.push(row("Fake note", r, {
-    "Fake note denomination":r.denomination, "Fake note count":r.quantity, "Fake note value":r.value,
-    "Fake note employee":r.employee, "Fake note payroll":r.payroll })));
-  RAW.pick.forEach(r => rows.push(row("Pick-up", r, {
-    "Pick-up no":r.seq, "Pick-up slot":r.seqLabel, "Vault not available":r.vaultUnavailable,
-    "Pick-up time":r.time, "Counted by staff and manager":r.countedByTwo,
-    "Counting sales staff":r.staffName, "Staff payroll":r.staffPayroll,
-    "Counting manager":r.managerName, "Manager payroll":r.managerPayroll })));
-  (RAW.bank||[]).forEach(r => rows.push(row("Bank deposit", r, {
-    "Deposit date":r.depositDate, "Sale day date":r.saleDayDate, "Days held":r.daysHeld,
-    "Cash in system for day":r.cashInSystem, "Cash deposited":r.cashDeposited,
-    "Deposit variance":r.variance, "Variance reason":r.varianceReason,
-    "People who banked":(RAW.bankPeople||[])
-      .filter(x => x.store===r.store && String(x.day)===String(r.day))
-      .map(x => x.name+" ("+x.payroll+")").join("; ") })));
-  (RAW.shift||[]).forEach(r => rows.push(row("Shift summary", r, {
-    "Section":modName(r.module),
-    "Shifts":(r.shifts||[]).map(s=>s.name+" "+s.from+"-"+s.to+" "+(r.reqWord||"req")+" "+s.req+" arr "+s.arr).join(" | "),
-    "Total requested":r.totalRequested, "Total arrived":r.totalArrived,
-    "Shortfall":r.shortfall, "Shortfall reason":r.shortfallReason, "Lines filed":r.peopleCount })));
-  (RAW.shiftPeople||[]).forEach(r => rows.push(row("Person on duty", r, {
-    "Section":modName(r.module), "Person name":r.name, "Gender":r.gender, "Company":r.company,
-    "Contact":r.contact, "Time in":r.timeIn, "Time out":r.timeOut })));
-  (RAW.budget||[]).forEach(r => {
-    const pairs = { "Budget allocated":r.allocated, "Day spend":r.dayTotal,
-      "Spent to date":r.spentToDate, "Budget remaining":r.remaining,
-      "Overspend reason":r.overspendReason };
-    CONFIG.BUDGET_CATEGORIES.forEach(c => pairs["Spent on " + c.label] = (r.categories||{})[c.key]);
-    rows.push(row("Budget", r, pairs));
-  });
-  (RAW.performance||[]).forEach(r => rows.push(row("Performance", r, {
-    "Section":modName(r.module), "Person name":r.name, "Company":r.company,
-    "Criterion":r.criterion, "Score":r.score, "Person average":r.average,
-    "Performance remark":r.remark })));
-  RAW.day.forEach(r => rows.push(row("Day-end", r, {
-    "Cash in system D365":r.cashInSystem, "Cash handed over":r.cashHandedOver,
-    "CIT vendor":r.citVendor, "Cash at store":r.cashAtStore,
-    "Cash accounted for":r.cashAccounted, "Cash difference":r.cashDifference,
-    "Card sales in system D365":r.cardInSystem, "Card settled":r.cardSettled,
-    "Card difference":r.cardDifference, "Card remarks":r.cardRemarks,
-    "Second pick-up done":r.secondPickupDone, "Email to Finance":r.emailToFinance,
-    "Declared shortage":r.declaredShortage, "Declared excess":r.declaredExcess,
-    "Till shortage":r.computedShortage, "Till excess":r.computedExcess,
-    "Reconciled":r.reconciled, "Day-end staff":r.staffName, "Day-end staff payroll":r.staffPayroll,
-    "Day-end manager":r.managerName, "Day-end manager payroll":r.managerPayroll })));
-  const csv = rows.map(r => r.map(c => '"'+String(c==null?"":c).replace(/"/g,'""')+'"').join(",")).join("\r\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob(["\ufeff"+csv], {type:"text/csv;charset=utf-8"}));
-  a.download = "sale-cash-control-" + $("revEv").value + ".csv";
-  a.click();
 }
 </script>
 </body>
