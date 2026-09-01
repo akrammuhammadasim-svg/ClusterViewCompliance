@@ -320,14 +320,14 @@ const CONFIG = {
         A sale can run up to 6 days. If an event is shorter, delete the extra
         lines; if it is longer, add more. Nothing else needs changing. */
   EVENTS: [
-    { id: "EVENT-01", name: "Sale Event 2026",
+    { id: "EVENT-02", name: "Sale Event 2026",
       budgets: {},
       days: [
-        { day: 1, date: "2026-08-31" },
-        { day: 2, date: "2026-09-01" },
-        { day: 3, date: "2026-09-02" },
-        { day: 4, date: "2026-09-03" },
-        { day: 5, date: "2026-09-04" }
+        { day: 1, date: "2026-09-02" },
+        { day: 2, date: "2026-09-03" },
+        { day: 3, date: "2026-09-04" },
+        { day: 4, date: "2026-09-05" },
+        { day: 5, date: "2026-09-06" }
       ]
     }
   ],
@@ -1274,47 +1274,7 @@ function showDepositReminder(due){
 }
 /* per-day task status for the home summary strip (reads the in-session preview store, or live TASKS) */
 let STORE_DATA = {};
-function seedMock(){
-  if(!CONFIG.PREVIEW_MODE || !STORE || STORE.code!=="EMP") return;
-  if(STORE_DATA.EMP && STORE_DATA.EMP.__seeded) return;
-  const pk=(seq,time,staff,sp,mgr,mp)=>({seq:String(seq),seqLabel:String(seq)==="1"?"First pick-up of the day":"Second pick-up of the day",vaultUnavailable:"No",time,countedByTwo:"Yes",staffName:staff,staffPayroll:sp,managerName:mgr,managerPayroll:mp,notes:""});
-  const vault=()=>({seq:"2",seqLabel:"Second pick-up of the day",vaultUnavailable:"Yes",time:"",countedByTwo:"",staffName:"",staffPayroll:"",managerName:"",managerPayroll:"",notes:"Vault locked, area manager had the key"});
-  const W=(nm,g,c,shift,i,o)=>({"f-sname":nm,"f-sgender":g,"f-scontact":c,"f-sshift":shift,"f-sin":i,"f-sout":o});
-  const G=(nm,g,co,c,shift,i,o)=>({"f-sname":nm,"f-sgender":g,"f-scompany":co,"f-scontact":c,"f-sshift":shift,"f-sin":i,"f-sout":o});
-  const SW=(name,from,to,req,arr)=>({name,from,to,req:String(req),arr:String(arr)});
-  const wagers=(shifts,people,reason)=>{const req=shifts.reduce((a,s)=>a+(+s.req),0),arr=shifts.reduce((a,s)=>a+(+s.arr),0);return {module:"wager",requested:req,arrived:arr,shifts,shortfall:String(req-arr),shortfallReason:reason||"",people,notes:""};};
-  const guards=(shifts,people,reason)=>{const req=shifts.reduce((a,s)=>a+(+s.req),0),arr=shifts.reduce((a,s)=>a+(+s.arr),0);return {module:"guard",requested:req,arrived:arr,shifts,shortfall:String(req-arr),shortfallReason:reason||"",people,notes:""};};
-  STORE_DATA.EMP={ __seeded:true };
-  STORE_DATA.EMP["1"]={ picks:[pk("1","14:20","Ali Raza","P-2231","Bilal Ahmed","M-1102"),vault()],
-    shift_wager:wagers([SW("First","09:00","17:00",3,3),SW("Mid","","",0,0),SW("Late","","",0,0)],
-      [W("Zara Ali","Female","0300-1112220","First","09:05","17:00"),
-       W("Hina Shah","Female","0300-1112221","First","09:30","17:00"),
-       W("Sana Malik","Female","0300-1112222","First","09:00","16:30")]),
-    shift_guard:guards([SW("First","","",0,0),SW("Mid","","",0,0),SW("Overnight","22:00","06:00",2,2)],
-      [G("Kamran Iqbal","Male","Al-Hattaf security PVT. LTD.","0301-1110000","Overnight","22:00","06:00"),
-       G("Rehan Ali","Male","Al-Hattaf security PVT. LTD.","0301-1110001","Overnight","22:20","06:00")]),
-    dayend:{ submittedAt:"21:40", tillCount:"3",
-      tills:[{pos:1,cashier:"Ali Raza",payroll:"P-1",result:"Balanced",amount:"0",remarks:""},
-             {pos:2,cashier:"Sana Malik",payroll:"P-2",result:"Short",amount:1200,remarks:"Drawer one bundle out"},
-             {pos:3,cashier:"Usman Tariq",payroll:"P-3",result:"Over",amount:300,remarks:"Extra note in drawer"}],
-      cashInSystem:"500000", cashHandedOver:"480000", cashAtStore:"20000", citVendor:"Phoenix",
-      declaredShortage:"1200", declaredExcess:"300", computedShortage:1200, computedExcess:300,
-      secondPickupDone:"Yes", emailToFinance:"No", reconciled:"Yes",
-      staffName:"Ali Raza", staffPayroll:"P-1", managerName:"Bilal Ahmed", managerPayroll:"M-1102",
-      fakeNotes:[{denomination:"1000",quantity:1,employee:"Sana Malik",payroll:"P-2",value:1000}],
-      cardInSystem:"200000", cardSettled:"200000", cardRemarks:"", notes:"" },
-    deposit:{ store:"EMP", day:"1", dayDate:"2026-08-29", saleDayDate:"2026-08-29", depositDate:"2026-08-30", cashInSystem:"500000", cashDeposited:"500000", variance:0, varianceReason:"", bankName:"MCB", slipNo:"DS-88231", people:[{name:"Bilal Ahmed",payroll:"M-1102"},{name:"Ali Raza",payroll:"P-2231"}], fakeNotes:[], notes:"Deposited at MCB main branch" },
-    budget:{ store:"EMP", day:"1", allocated:900000, categories:{food:15000,wagersRetail:30000,wagersFragrance:20000,janitorial:8000,tentage:25000,valet:12000,water:5000}, dayTotal:115000, spentBefore:0, spentToDate:115000, remaining:785000, overspendReason:"", notes:"" } };
-  STORE_DATA.EMP["2"]={ picks:[pk("1","14:05","Usman Tariq","P-3390","Bilal Ahmed","M-1102")],
-    shift_wager:wagers([SW("First","09:00","17:00",4,2),SW("Mid","","",0,0),SW("Late","","",0,0)],
-      [W("Ayesha Khan","Female","0300-2220000","First","09:00","17:00"),
-       W("Nida Fatima","Female","0300-2220001","First","09:40","17:00")],"Two daily wagers did not show up") };
-  STORE_DATA.EMP["3"]={ picks:[pk("1","13:50","Ali Raza","P-2231","Bilal Ahmed","M-1102")],
-    shift_wager:wagers([SW("First","09:00","17:00",3,3),SW("Mid","","",0,0),SW("Late","","",0,0)],
-      [W("Zara Ali","Female","0300-1112220","First","09:00","17:00"),
-       W("Hina Shah","Female","0300-1112221","First","09:00","17:00"),
-       W("Sana Malik","Female","0300-1112222","First","09:00","17:00")]) };
-}
+function seedMock(){ /* production build — no mock data ships in this file */ }
 function dateOfDay(dayNum){ const x = allDays().find(y => String(y.day)===String(dayNum)); return x ? x.date : ""; }
 function dayTaskStatus(dayNum){
   const sd = (STORE_DATA[STORE.code]||{})[String(dayNum)] || {};
@@ -3176,7 +3136,7 @@ function toast(m){ try{ let t=document.getElementById("clToast");
 let OVPAYLOAD=null;
 async function ovFetch(){
   const sel=$("revEv");
-  const ev=(sel&&sel.value)||(CONFIG.EVENTS[0]||{}).id||"EVENT-01";
+  const ev=(sel&&sel.value)||(CONFIG.EVENTS[0]||{}).id||"EVENT-02";
   const res=await fetch(CONFIG.API_URL+"?action=all&code="+encodeURIComponent(ACCESS_CODE)+"&event="+encodeURIComponent(ev));
   return await res.json();
 }
@@ -3206,7 +3166,7 @@ function ovBuild(){
   const p=OVPAYLOAD||{stores:[],records:[],amendments:[],signoffs:[],incidents:[]};
   const ev=CONFIG.EVENTS[0]||{days:[]};
   OVS={};
-  OVS.event=ev.id||"EVENT-01";
+  OVS.event=ev.id||"EVENT-02";
   /* current sale day from the server's business date */
   let day=1; const bd=p.businessDate||"";
   (ev.days||[]).forEach(d=>{ if(d.date<=bd) day=d.day; });
