@@ -967,6 +967,7 @@ const CONFIG = {
         <button class="tab" data-tab="B" aria-selected="false">Action needed</button>
         <button class="tab" data-tab="C" aria-selected="false">Exceptions</button>
         <button class="tab" data-tab="D" aria-selected="false">Signed off</button>
+        <button class="tab" data-tab="E" aria-selected="false">Reports</button>
       </div>
       <div class="card-body scroll" id="revPane"></div>
     </div>
@@ -3171,9 +3172,12 @@ function ovBuild(){
   let day=1; const bd=p.businessDate||"";
   (ev.days||[]).forEach(d=>{ if(d.date<=bd) day=d.day; });
   OVS.today=day;
+  /* BEFORE the first sale day (the prep evening): "tomorrow" is Day 1, not Day 2 */
+  OVS.preEvent=!!(bd && (ev.days||[]).length && bd < ev.days[0].date);
+  OVS.tomorrow=OVS.preEvent?1:day+1;
   if(OVDAYPICK && OVDAYPICK<=day) day=OVDAYPICK;   /* manager reviewing an earlier day */
   const dObj=(ev.days||[]).find(d=>String(d.day)===String(day))||{day:day,date:bd};
-  OVS.day=day; OVS.dayLabel="Day "+day+" — "+(dObj.date||bd);
+  OVS.day=day; OVS.dayLabel=OVS.preEvent?("Sale starts tomorrow — Day 1 · "+(dObj.date||bd)):("Day "+day+" — "+(dObj.date||bd));
   /* point every report's day selector at the current sale day */
   OVPICKDAY=day; OVDEPDAY=day; OVSHIFTDAY=day; OVRATEDAY=day; OVBUDDAY=day;
   OVS.stores=(p.stores||[]).map(x=>({code:x.name,name:x.name,region:x.mgr}));
@@ -3951,8 +3955,9 @@ function ovPrepDetailHTML(d){
   });
   return h;
 }
-function ovPrepDay(){ return (OVPREPDAY!=null)?OVPREPDAY:Math.min(OVS.today+1,5); }  /* default: TOMORROW */
-let OVPREPEXP={};
+function ovPrepDay(){ return (OVPREPDAY!=null)?OVPREPDAY:Math.min(OVS.tomorrow,5); }  /* default: TOMORROW */
+let OVPREPEXP={}, OVPREPFILT="all";
+function ovSetPrepFilt(f){ OVPREPFILT=f; OVPREPEXP={}; ovRender(); }
 function ovPrepToggle(code){ OVPREPEXP[code]=!OVPREPEXP[code]; ovRender(); }
 function ovSetPrepDay(d){ OVPREPDAY=d; OVPREPEXP={}; ovRender(); }
 function ovPrepFullCsv(){
@@ -4179,7 +4184,7 @@ async function ovPrepReview(code,dy,decision){
   }catch(e){ toast("No connection — not saved."); }
 }
 function ovPrepStrip(){
-  const tomorrow=OVS.today+1; if(tomorrow>5) return "";
+  const tomorrow=OVS.tomorrow; if(tomorrow>5) return "";
   const stores=ovTableStores();
   let filed=0,app=0,sb=0;
   stores.forEach(s=>{ const d=(OVS.prep5[s.code]||{})[tomorrow]; if(!d) return; filed++;
@@ -4194,24 +4199,50 @@ function ovPrepStrip(){
 }
 function ovPrepReport(){
   const dy=ovPrepDay(); const stores=ovTableStores();
-  const btns=[1,2,3,4,5].map(d2=>'<button class="ov-daybtn'+(dy===d2?" on":"")+'"'+(d2>OVS.today+1?' disabled style="opacity:.4"':' onclick="ovSetPrepDay('+d2+')"')+'>Day '+d2+(d2===OVS.today+1?" · tomorrow":"")+'</button>').join("");
-  const list=stores.map(s=>({s:s,d:(OVS.prep5[s.code]||{})[dy]}))
+  const btns=[1,2,3,4,5].map(d2=>'<button class="ov-daybtn'+(dy===d2?" on":"")+'"'+(d2>OVS.tomorrow?' disabled style="opacity:.4"':' onclick="ovSetPrepDay('+d2+')"')+'>Day '+d2+(d2===OVS.tomorrow?" · tomorrow":"")+'</button>').join("");
+  const all=stores.map(s=>({s:s,d:(OVS.prep5[s.code]||{})[dy]}));
+  const stOf=o=>!o.d?"notfiled":(o.d.prepStatus==="approved"?"approved":o.d.prepStatus==="sentback"?"sentback":"awaiting");
+  const C={all:all.length,notfiled:0,awaiting:0,sentback:0,approved:0,flagged:0};
+  all.forEach(o=>{ C[stOf(o)]++; if(o.d&&prepFlags(o.d).length) C.flagged++; });
+  /* decision strip — tap a number to filter the table to exactly those stores */
+  const pill=(k,n,lab,cls)=>'<div class="ov-stat '+cls+(OVPREPFILT===k?"":"")+'" style="cursor:pointer'+(OVPREPFILT===k?';outline:2px solid #17457F;border-radius:8px':'')+'" onclick="ovSetPrepFilt(\''+k+'\')"><b>'+n+'</b><span>'+lab+'</span></div>';
+  const strip='<div class="ov-strip">'
+    +pill("all",C.all,"stores","")
+    +pill("awaiting",C.awaiting,"awaiting review",C.awaiting?"warn":"good")
+    +pill("flagged",C.flagged,"with flags",C.flagged?"bad":"good")
+    +pill("sentback",C.sentback,"sent back",C.sentback?"bad":"")
+    +pill("notfiled",C.notfiled,"not filed",C.notfiled?"bad":"good")
+    +pill("approved",C.approved,"approved","good")+'</div>';
+  const list=all.filter(o=>OVPREPFILT==="all"?true:OVPREPFILT==="flagged"?(o.d&&prepFlags(o.d).length):stOf(o)===OVPREPFILT)
     .sort((a,b)=>{ const r=x=>!x.d?0:x.d.prepStatus==="sentback"?1:x.d.prepStatus==="submitted"?2:3; return r(a)-r(b)||a.s.name.localeCompare(b.s.name); });
   const trs=list.map(o=>{ const fl=o.d?prepFlags(o.d):[];
     const open=OVPREPEXP[o.s.code];
+    const can=ovCanAct(o.s.code), stx=stOf(o);
     let tr='<tr onclick="ovPrepToggle(\''+o.s.code+'\')"><td class="stk">'+esc(o.s.name)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td><td class="muted">'+esc(o.s.region)+'</td>'
       +'<td>'+prepStatusChip(o.d)+(o.d&&o.d.filedLate?' <span class="ov-echip">⏰</span>':'')+'</td>'
-      +'<td class="'+(fl.length?'cell-warn':'muted')+'">'+(o.d?(fl.length||'—'):'·')+'</td>'
-      +'<td style="text-align:left">'+(fl.length?fl.slice(0,3).map(x=>'⚑ '+esc(x)).join("<br>")+(fl.length>3?"<br>+"+(fl.length-3)+" more…":""):(o.d?'<span style="color:#1B6B4A">all in order</span>':'—'))+'</td>'
-      +'<td class="muted">'+(o.d&&o.d.prepBy?esc(o.d.prepBy):'—')+'</td></tr>';
-    if(open) tr+='<tr class="ov-sub"><td colspan="6" style="background:#f7f8fa;padding:10px 14px;text-align:left">'
-      +(o.d?ovPrepDetailHTML(o.d):'<span class="meta">Nothing filed yet.</span>')
-      +'<div style="margin-top:8px"><a style="color:#1f4e8c;cursor:pointer;font-weight:600" onclick="event.stopPropagation();ovOpen(\''+o.s.code+'\')">Open the store — review &amp; approve / send back ›</a></div></td></tr>';
+      +'<td style="text-align:left;max-width:340px">'+(fl.length?('<b style="color:#B3261E">⚑ '+fl.length+'</b><br>'+fl.slice(0,3).map(x=>esc(x)).join("<br>")+(fl.length>3?"<br>+"+(fl.length-3)+" more — tap the row":"")):(o.d?'<span style="color:#1B6B4A">✓ all in order</span>':'—'))+'</td>'
+      +'<td class="muted">'+(o.d&&o.d.prepBy?esc(o.d.prepBy)+(o.d.prepAt?'<br><small>'+esc(o.d.prepAt)+'</small>':''):'—')+'</td></tr>';
+    if(open){
+      const rid="prepRem-"+o.s.code.replace(/[^A-Za-z0-9]/g,"_");
+      const acts=(can&&o.d&&stx!=="approved")
+        ? '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #c9d6ee" onclick="event.stopPropagation()">'
+          +'<span class="lab">Your remarks to the store '+(stx==="awaiting"?'(required to send back)':'')+'</span>'
+          +'<input type="text" id="'+rid+'" placeholder="e.g. Get the empty rack approved, fix aisle 3 signage" style="width:100%;margin:4px 0 8px">'
+          +'<div class="apv-acts"><button class="apv-no" onclick="ovPrepReview(\''+o.s.code+'\','+dy+',\'sendback\')">↩ Send back</button>'
+          +'<button class="apv-ok" onclick="ovPrepReview(\''+o.s.code+'\','+dy+',\'approve\')">✓ Approve preparation</button></div></div>'
+        : (o.d&&stx!=="approved"&&!can?'<p class="meta" style="margin-top:8px">Review is done by this store\'s cluster manager or head office.</p>':"");
+      tr+='<tr class="ov-sub"><td colspan="5" style="background:#f7f8fa;padding:10px 14px;text-align:left" onclick="event.stopPropagation()">'
+        +(o.d?ovPrepDetailHTML(o.d):'<span class="meta">Nothing filed yet for Day '+dy+'.</span>')
+        +acts
+        +'<div style="margin-top:8px"><a style="color:#1f4e8c;cursor:pointer;font-weight:600" onclick="ovOpen(\''+o.s.code+'\')">Open the store\'s full day ›</a></div></td></tr>';
+    }
     return tr; }).join("");
-  return '<div class="ov-cashbar"><div><b>🌙 Sale-day preparation</b> · '+(OVREGFILTER||OVREGION||"all stores")+'</div><div style="display:flex;gap:6px"><button class="btn btn-line btn-sm" onclick="ovPrepCsv()">⬇ Summary CSV</button><button class="btn btn-line btn-sm" onclick="ovPrepFullCsv()">⬇ Full answers CSV</button></div></div>'
+  return '<div class="ov-cashbar"><div><b>🌙 Sale-day preparation</b> · '+(OVREGFILTER||OVREGION||"all stores")+' · Day '+dy+'</div><div style="display:flex;gap:6px"><button class="btn btn-line btn-sm" onclick="ovPrepCsv()">⬇ Summary CSV</button><button class="btn btn-line btn-sm" onclick="ovPrepFullCsv()">⬇ Full answers CSV</button></div></div>'
     +'<div class="ov-daysel">Prepared for: '+btns+'</div>'
-    +'<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Store</th><th>Cluster manager</th><th>Status</th><th>Flags</th><th>What needs attention</th><th>Reviewed by</th></tr>'+trs+'</table></div>'
-    +'<p class="meta" style="margin:8px 2px 0">Filed the evening before, for the next sale day. Not-filed and sent-back stores float to the top. <b>Tap a store row to see EVERY answer as filled</b>; the link inside opens the store to approve / send back.</p>';
+    +strip
+    +(list.length?'<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Store</th><th>Cluster manager</th><th>Status</th><th>What needs attention</th><th>Reviewed by</th></tr>'+trs+'</table></div>'
+      :'<div class="card"><div class="card-body"><span class="meta">No stores in this bucket for Day '+dy+'. Tap another number above.</span></div></div>')
+    +'<p class="meta" style="margin:8px 2px 0">Filed the evening before the sale day. Tap a count above to focus; tap a store row for <b>every answer as filled</b>, with approve / send-back right there.</p>';
 }
 function ovPrepCsv(){
   const dy=ovPrepDay();
@@ -4373,7 +4404,7 @@ function ovTrend(){
       const dp=(OVS.deposit5[s.code]||{})[dy]; if(dp&&dp.status==="banked")banked++; });
     const inc=(OVS.incidents||[]).filter(i=>{ const dd=(ev.days||[]).find(x=>x.day===dy); return dd&&i.date===dd.date&&stores.some(s=>s.code===i.code); }).length;
     const avg=stores.length?Math.round(pctSum/stores.length):0;
-    return '<tr style="cursor:pointer" onclick="ovSetHomeDay('+dy+')"><td class="stk">Day '+dy+(dy===OVS.today?' · today':'')+(dy===OVS.day?' ◀ viewing':'')+'</td>'
+    return '<tr style="cursor:pointer" onclick="ovSetHomeDay('+dy+')"><td class="stk">Day '+dy+(dy===OVS.today?(OVS.preEvent?' · starts tomorrow':' · today'):'')+(dy===OVS.day?' ◀ viewing':'')+'</td>'
       +'<td>'+ovPctBadge(avg)+'</td><td>'+signed+'/'+stores.length+'</td><td>'+banked+'/'+stores.length+'</td>'
       +'<td>'+ovNetFmt(net)+'</td><td class="'+(inc?'cell-warn':'muted')+'">'+(inc||'—')+'</td></tr>';
   }).join("");
@@ -4390,7 +4421,7 @@ function ovExportAll(){
 function ovHqHome(){
   const daysBar='<div class="ov-daysel" style="margin:0 0 10px">Reviewing: '
     +(CONFIG.EVENTS[0]||{days:[]}).days.map(d=>{ const fut=d.day>OVS.today;
-       return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?" · today":"")+'</button>'; }).join("")+'</div>';
+       return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?(OVS.preEvent?" · starts tomorrow":" · today"):"")+'</button>'; }).join("")+'</div>';
   return daysBar
     +ovNationalStrip()
     +ovAttention()
@@ -4422,6 +4453,7 @@ function ovDoors(){
       +'<button onclick="ovMatrix(\'support\')">HO attendance</button></div>'
     +'<div class="ovh-door"><h4>🛡 Governance</h4>'
       +'<button onclick="ovSetMod(\'prep\')">🌙 Sale-day preparation</button>'
+      +'<button onclick="ovSetMod(\'postlens\')">🌇 Post-sale wind-down</button>'
       +'<button onclick="ovSetMod(\'signoffs\')">Sign-offs by cluster</button>'
       +'<button onclick="ovSetMod(\'approvals\')">Approvals queue</button>'
       +'<button onclick="ovSetMod(\'incidents\')">Incident log</button>'
@@ -4486,7 +4518,7 @@ function ovClusterHomeClassic(){
   const daysBar='<div class="ov-daysel" style="margin:0 0 10px">Reviewing: '
     +(CONFIG.EVENTS[0]||{days:[]}).days.map(d=>{
        const fut=d.day>OVS.today;
-       return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?" · today":"")+'</button>'; }).join("")
+       return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?(OVS.preEvent?" · starts tomorrow":" · today"):"")+'</button>'; }).join("")
     +'</div>';
   const head='<div class="ovh-sechead">Your stores — tap a store to review &amp; sign off'
     +(OVFILTER!=="all"?' · <span style="color:#B3261E">filtered: '+(OVFILTER==="action"?"action needed":OVFILTER)+'</span>':'')+'</div>';
@@ -4495,6 +4527,21 @@ function ovClusterHomeClassic(){
 /* Cluster managers get the SAME dashboard as head office, automatically scoped
    to only their stores by ovTableStores(); ovClusterHomeClassic above is kept
    only as a fallback reference. */
+function ovFocusView(){
+  const lab=OVFILTER==="action"?"Action needed":OVFILTER==="exceptions"?"Exceptions":"Signed off";
+  const sub=OVFILTER==="action"?"stores that still need something for this day — not or partly filed, money changes waiting, or exceptions open"
+    :OVFILTER==="exceptions"?"stores with open exceptions or money changes awaiting a decision"
+    :"stores whose day is signed off and locked";
+  return '<div class="ovh-sechead">'+lab+' — '+OVS.dayLabel+'</div>'
+    +'<p class="meta" style="margin:0 0 8px">'+sub+'. Tap a store to open it; use the tabs above to switch view.</p>'
+    +ovStoreRank();
+}
+function ovReportsHub(){
+  return '<div class="ovh-sechead">📊 Reporting — every report in one place</div>'
+    +'<p class="meta" style="margin:0 0 8px">Money, People and Governance reports for your scope. Each opens store-wise with its CSV download.</p>'
+    +ovDoors()
+    +'<div class="card" style="margin-top:10px"><div class="card-body"><button class="btn btn-line" style="width:100%" onclick="ovExportAll()">📦 Export everything — all reports as CSV</button></div></div>';
+}
 function ovLens(){
   const head=(OVROLE==="cluster")
     ? '<p class="meta" style="margin:0 0 8px"><button class="cl-back" onclick="ovExit()">‹ Sign out of cluster</button> · '+esc(OVREGION)+' · '+OVS.dayLabel+'</p>'
@@ -4505,6 +4552,8 @@ function ovLens(){
     : '<p class="meta" style="margin:0 0 8px">Head office · '+OVS.dayLabel+'</p>';
   let body;
   if(OVMOD==="home") return head+ovRegionBar()+ovHome();
+  if(OVMOD==="focus") return head+ovRegionBar()+ovFocusView();
+  if(OVMOD==="reports") return head+ovRegionBar()+ovReportsHub();
   if(OVMOD==="overview") body=ovList();
   else if(OVMOD==="approvals") body=ovApprovals();
   else if(OVMOD==="incidents") body=ovIncidentReport();
@@ -4553,7 +4602,7 @@ function ovCashReport(){
 }
 function csvCell(v){ v=String(v==null?"":v); if(/^[=+\-@\t\r]/.test(v)) v="'"+v; if(/[",\n]/.test(v)) v='"'+v.replace(/"/g,'""')+'"'; return v; }
 function downloadCsv(name,rows){ const csv=rows.map(r=>r.map(csvCell).join(",")).join("\r\n");
-  try{ const blob=new Blob([csv],{type:"text/csv;charset=utf-8"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{a.remove(); URL.revokeObjectURL(url);},120); toast("CSV downloaded."); }
+  try{ const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{a.remove(); URL.revokeObjectURL(url);},120); toast("CSV downloaded."); }
   catch(e){ toast("Download blocked in this view — open the file in a browser."); } }
 function ovCashCsv(){ const rows=[["Store","Region","Day","Cash in system","Deposited","Deposit variance","Till shortage","Till excess","Fake notes count","Fake notes PKR"]];
   ovCashStores().forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=OVS.cash[s.code][dy]; rows.push([s.name,s.region,"Day "+dy,f.sys,f.dep,f.depVar,f.short,f.over,f.fakeN,f.fakeV]); } });
@@ -4918,7 +4967,10 @@ function startReview(){
   document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
     TAB = t.dataset.tab;
     document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", x.dataset.tab===TAB));
-    OVFILTER = FILT[TAB] || "all"; OVOPEN = null; ovRender();
+    OVOPEN = null;
+    if(TAB==="E"){ OVMOD="reports"; }
+    else { OVFILTER = FILT[TAB] || "all"; OVMOD = (TAB==="A") ? "home" : "focus"; }
+    ovRender();
   });
   ovStart("hq");
 }
