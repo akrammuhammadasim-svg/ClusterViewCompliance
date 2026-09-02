@@ -20,6 +20,9 @@
 html,body{margin:0;padding:0}
 body{font-family:var(--sans);background:var(--canvas);color:var(--ink);font-size:16px;line-height:1.45;-webkit-text-size-adjust:100%}
 .wrap{max-width:760px;margin:0 auto;padding:0 16px 40px}
+@media(min-width:1000px){ .wrap{max-width:1360px} .ov-strip{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))} .ov-stat b{font-size:20px} }
+.ov-stat b{overflow-wrap:anywhere;line-height:1.25}
+.ov-stat span{overflow-wrap:anywhere}
 .hidden{display:none !important}
 
 .mast{background:var(--sapphire);color:#fff;padding:16px 0 14px;border-bottom:3px solid var(--sapphire-dark)}
@@ -965,7 +968,7 @@ const CONFIG = {
     <div class="card"><div class="card-body grid2">
       <div><label for="revEv">Sale event</label><select id="revEv"></select></div>
       <div style="display:flex;gap:8px;align-items:flex-end">
-        <button class="btn btn-block" id="revLoad">🔄 Refresh data</button>
+        <div style="display:flex;flex-direction:column;flex:1"><div id="ovDataAsOf" style="font-size:11px;color:#6b7280;text-align:center;margin-bottom:3px"></div><button class="btn btn-block" id="revLoad">🔄 Refresh data</button></div>
         <button class="btn btn-line btn-block" id="revCsv">⬇ Export CSV</button>
       </div>
     </div></div>
@@ -1171,9 +1174,15 @@ async function openGate(){
     note($("gateMsg"),"This site is not connected yet. The backend URL has not been set.","bad"); return; }
   note($("gateMsg"),"Checking your code…","info");
   try{
-    const res = await fetch(CONFIG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body:JSON.stringify({action:"auth",code:v})});
-    const o = await res.json();
+    let o=null, lastErr=null;
+    for(let att=0; att<3; att++){
+      try{
+        const res = await fetch(CONFIG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+          body:JSON.stringify({action:"auth",code:v})});
+        o = await res.json(); lastErr=null; break;
+      }catch(e){ lastErr=e; if(att<2) await new Promise(r=>setTimeout(r,400+att*800)); }
+    }
+    if(lastErr) throw lastErr;
     if(!o.ok){ note($("gateMsg"),o.error||"That code is not recognised.","bad"); return; }
     if(o.role==="store"){ note($("gateMsg"),"That is a store code. This site is for head office, regional / cluster managers and departments — stores use the store entry site.","bad"); return; }
     ACCESS_CODE = v;
@@ -1181,7 +1190,7 @@ async function openGate(){
     else if(o.role==="regional") ovStart("regional", o.rm, o.actMgr||"");
     else if(o.role==="dept") ovStart("dept", o.deptLabel||"", "", o.dept);
     else startReview();
-  }catch(e){ note($("gateMsg"),"No connection. Check the internet and try again.","bad"); }
+  }catch(e){ note($("gateMsg"),"The server is busy or unreachable right now — wait a minute and try again. (Usually Google's side, not your internet.)","bad"); }
 }
 
 /* ============ business day, catch-up mode and the day checklist ============ */
@@ -1703,7 +1712,7 @@ function loadPickDraft(){
 /* 24h time -> 12h with AM/PM, for display */
 function fmt12(t){ if(!t) return ""; const m=String(t).match(/^(\d{1,2}):(\d{2})/); if(!m) return t; let h=+m[1]; const ap=h>=12?"PM":"AM"; h=h%12||12; return h+":"+m[2]+" "+ap; }
 function timeOpts(){ let o='<option value="">--:-- --</option>'; for(let H=0;H<24;H++) for(let M=0;M<60;M+=5){ const v=String(H).padStart(2,"0")+":"+String(M).padStart(2,"0"); o+='<option value="'+v+'">'+fmt12(v)+'</option>'; } return o; }
-function pkr(x){ return "PKR "+fmt(Number(x)||0); }
+function pkr(x){ return "PKR "+fmt(Number(String(x==null?"":x).replace(/,/g,""))||0); }
 function filedPicks(){ const sd=(STORE_DATA[STORE.code]||{})[String(DAY.day)]; return (sd&&sd.picks)||[]; }
 /* Sale-Readiness model: filed pick-ups stay on screen as LOCKED records; tap Edit to change */
 function renderPickLocked(){
@@ -3129,12 +3138,20 @@ async function send(btn, msgEl, body, onOk){
 let OVS=null, OVROLE="hq", OVREGION="", OVRM="", OVACT="", OVDEPT="", OVCONTAINER="revPane", OVOPEN=null, OVEXPAND={}, OVFILTER="all";
 function startCluster(mgr){ ovStart("cluster", mgr); }
 function serverNow(){ const n=new Date(); return n; }
+function ovParseAt(at){ const str=String(at);
+  if(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(str)) return new Date(str.replace(" ","T")+(str.length===16?":00":""));
+  const d=new Date(str); return isNaN(d.getTime())?null:d; }
+function ovStamp(at){ const d=ovParseAt(at); if(!d) return String(at);
+  const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  let h=d.getHours(); const ap=h>=12?"PM":"AM"; h=h%12||12;
+  return String(d.getDate()).padStart(2,"0")+" "+M[d.getMonth()]+", "+h+":"+String(d.getMinutes()).padStart(2,"0")+" "+ap; }
 function freshness(at){ if(!at) return {txt:"not filed",stale:false,none:true};
-  const dt=new Date(String(at).replace(" ","T")+":00"); const h=(serverNow()-dt)/3600000; const stale=h>24;
+  const dt=ovParseAt(at); if(!dt) return {txt:"", stale:false, at:String(at)};
+  const h=(serverNow()-dt)/3600000; const stale=h>24;
   let txt; if(h<1) txt=Math.max(1,Math.round(h*60))+"m ago"; else if(h<48) txt=Math.round(h)+"h ago"; else txt=Math.round(h/24)+"d ago";
   return {txt, stale, at:String(at)}; }
 function freshBadge(at){ const f=freshness(at); if(f.none) return '<span class="ov-fresh none">not filed</span>';
-  return '<span class="ov-fresh'+(f.stale?" stale":"")+'">'+(f.stale?"⚠ ":"🕑 ")+esc(f.at.slice(11))+' · '+esc(f.txt)+(f.stale?" · stale":"")+'</span>'; }
+  return '<span class="ov-fresh'+(f.stale?" stale":"")+'">'+(f.stale?"⚠ ":"🕑 ")+esc(ovStamp(f.at))+(f.txt?' · '+esc(f.txt):'')+(f.stale?" · stale":"")+'</span>'; }
 function ovCanAct(code){ const s=(OVS.stores||[]).find(x=>x.code===code); if(!s) return false;
   if(OVROLE==="hq") return true;
   if(OVROLE==="regional") return !!OVACT && s.region===OVACT;   /* review-only, except own cluster */
@@ -3152,8 +3169,15 @@ let OVPAYLOAD=null;
 async function ovFetch(){
   const sel=$("revEv");
   const ev=(sel&&sel.value)||(CONFIG.EVENTS[0]||{}).id||"EVENT-02";
-  const res=await fetch(CONFIG.API_URL+"?action=all&code="+encodeURIComponent(ACCESS_CODE)+"&event="+encodeURIComponent(ev));
-  return await res.json();
+  /* retry twice — Google is often just momentarily busy under 47-store load */
+  let lastErr=null;
+  for(let att=0; att<3; att++){
+    try{
+      const res=await fetch(CONFIG.API_URL+"?action=all&code="+encodeURIComponent(ACCESS_CODE)+"&event="+encodeURIComponent(ev));
+      return await res.json();
+    }catch(e){ lastErr=e; if(att<2) await new Promise(r=>setTimeout(r,400+att*800)); }
+  }
+  throw lastErr;
 }
 const OV_INC_META={theft:{lab:"Theft",prio:1},lost:{lab:"Lost & found"},fight:{lab:"Fight",prio:1},
  power:{lab:"Electricity outage",out:1},gen:{lab:"Generator out of service",out:1},lift:{lab:"Lift out of service",out:1},
@@ -3186,6 +3210,7 @@ function ovBuild(){
   let day=1; const bd=p.businessDate||"";
   (ev.days||[]).forEach(d=>{ if(d.date<=bd) day=d.day; });
   OVS.today=day;
+  try{ ovStampNow(); }catch(e){}
   /* BEFORE the first sale day (the prep evening): "tomorrow" is Day 1, not Day 2 */
   OVS.preEvent=!!(bd && (ev.days||[]).length && bd < ev.days[0].date);
   OVS.tomorrow=OVS.preEvent?1:day+1;
@@ -3383,7 +3408,10 @@ function ovModule(code,key){
       if(t.cardResult&&t.cardResult!=="Matches") exc.push("Till "+t.pos+" card "+t.cardResult+" "+pkr(t.cardAmount||0));
       if((cv+kv)===0&&((t.result&&t.result!=="Balanced")||(t.cardResult&&t.cardResult!=="Matches")))
         exc.push("Till "+t.pos+" ("+(t.cashier||"")+"): settles to 0 but errors on BOTH sides"); });
-    const cdiff=Number(rec.cardInSystem||0)-Number(rec.cardSettled||0); if(cdiff!==0) exc.push("Card off by "+pkr(Math.abs(cdiff)));
+    const _agT=aggTill(rec);
+    if(_agT.cardSysMissing) exc.push("⚠ Card SYSTEM figure missing — settled "+pkr(rec.cardSettled)+" cannot be reconciled. Send back to the store.");
+    else { const cdiff=ovN(rec.cardInSystem)-ovN(rec.cardSettled); if(cdiff!==0) exc.push("Card off by "+pkr(Math.abs(cdiff))); }
+    if(_agT.cashSysMissing) exc.push("⚠ Cash SYSTEM figure missing — handed/held "+pkr(ovN(rec.cashHandedOver)+ovN(rec.cashAtStore))+" cannot be reconciled. Send back to the store.");
     if((rec.fakeNotes||[]).length) exc.push("Fake notes found: "+rec.fakeNotes.length);
     if(rec.secondPickupDone==="No") exc.push("2nd pick-up not done — cash held overnight");
     const tills=(rec.tills||[]).map(t=>{
@@ -3440,7 +3468,7 @@ function ovStaleCount(code){ const m=(OVS.data[code]||{})._meta||{}; return Obje
 /* ---- entry points ---- */
 async function ovStart(role, mgr, actMgr, dept){ OVROLE=role; OVOPEN=null; OVEXPAND={}; OVFILTER="all"; OVMOD="home"; OVACT=actMgr||""; OVDEPT=dept||"";
   try{ const o=await ovFetch(); if(!o.ok){ note($("gateMsg"),o.error||"Could not load data.","bad"); return; } OVPAYLOAD=o; }
-  catch(e){ note($("gateMsg"),"No connection — could not load the data.","bad"); return; }
+  catch(e){ note($("gateMsg"),"Server busy — could not load the data. Press Refresh in a minute.","bad"); return; }
   ovBuild();
   if(role==="cluster"){ OVREGION=mgr||""; OVCONTAINER="clBody"; $("clHead").textContent="Cluster manager: "+OVREGION+" · "+OVS.dayLabel; show("cluster"); }
   else if(role==="regional"){ OVREGION=""; OVRM=mgr||""; OVCONTAINER="clBody";
@@ -3450,7 +3478,10 @@ async function ovStart(role, mgr, actMgr, dept){ OVROLE=role; OVOPEN=null; OVEXP
     $("clHead").textContent=(mgr||("Department — "+OVDEPT))+" · all stores · review only · "+OVS.dayLabel; show("cluster"); }
   else { OVREGION=""; OVCONTAINER="revPane"; show("review"); }
   ovRender(); }
-async function ovRefresh(){ try{ const o=await ovFetch(); if(o.ok){ OVPAYLOAD=o; ovBuild(); ovRender(); } }catch(e){} }
+function ovStampNow(){ const el=document.getElementById("ovDataAsOf"); if(!el) return;
+  const n=new Date(); let h=n.getHours(); const ap=h>=12?"PM":"AM"; h=h%12||12;
+  el.textContent="Data as of "+h+":"+String(n.getMinutes()).padStart(2,"0")+":"+String(n.getSeconds()).padStart(2,"0")+" "+ap; }
+async function ovRefresh(){ try{ const o=await ovFetch(); if(o.ok){ OVPAYLOAD=o; ovBuild(); ovStampNow(); ovRender(); } }catch(e){} }
 function ovScopeStores(){ if(OVROLE==="cluster") return OVS.stores.filter(s=>s.region===OVREGION);
   return OVS.stores; }   /* hq = all; regional = server already sends ONLY their region's stores */
 function ovRender(){ const box=$(OVCONTAINER); if(!box) return; box.innerHTML = OVOPEN ? ovDrill(OVOPEN) : ovLens();
@@ -3625,7 +3656,7 @@ async function ovDecide(code,i,decision){
     rec.amendments.splice(i,1);
     toast((decision==="approve"?(p.who+" approved — now official."):"Sent back to the store — not approved.")+(remarks?" Your remarks went to the store.":""));
     ovRefresh();
-  }catch(e){ toast("No connection — decision not saved."); }
+  }catch(e){ toast("Server busy — the decision was NOT saved. Press the button again in a minute."); }
 }
 function ovApprove(code,i){ ovDecide(code,i,"approve"); }
 function ovReject(code,i){ ovDecide(code,i,"reject"); }
@@ -3647,7 +3678,7 @@ async function ovSignoff(code){
     rec.signoff={by:(OVROLE==="hq"?"Head office":OVROLE==="regional"?OVACT:OVREGION),at:nowMeta(),mods:mods};
     (OVS.signed5[code]=OVS.signed5[code]||{})[String(OVS.day)]=rec.signoff;
     toast(OVS.stores.find(s=>s.code===code).name.split(",")[0]+" signed off — day closed."); ovRender();
-  }catch(e){ toast("No connection — sign-off not saved."); }
+  }catch(e){ toast("Server busy — the sign-off was NOT saved. Press it again in a minute."); }
 }
 async function ovReopen(code){
   try{
@@ -3672,18 +3703,24 @@ const OV_LENSES=[["overview","Overview"],["prep","Sale prep"],["postlens","Post-
 function ovTableStores(){ return ovScopeStores().filter(s=> !OVREGFILTER || s.region===OVREGFILTER); }
 function ovDiff(from,to){ return '<span class="ov-old">'+esc(from)+'</span><span class="ov-arw">→</span><span class="ov-new">'+esc(to)+'</span>'; }
 function cell(v,bad){ return {v:v,cls:bad?"cell-bad":""}; }
-function ovN(x){ return Number(x)||0; }
+function ovN(x){ return Number(String(x==null?"":x).replace(/,/g,""))||0; }
 function frCell(at){ const f=freshness(at); if(f.none) return {v:"—",cls:"muted"}; return {v:(f.stale?"⚠ ":"")+f.txt,cls:f.stale?"cell-warn":"muted"}; }
 
 /* aggregates */
 function aggWager(rec){ let late=0,early=0; (rec.people||[]).forEach(pp=>{ const fl=ovPersonFlags(rec,pp); if(fl.includes("Late arrival"))late++; if(fl.includes("Early going"))early++; });
   const byShift=n=>{ const s=(rec.shifts||[]).find(x=>x.name===n); return s?ovN(s.arr):0; };
   return {dem:ovN(rec.requested),arr:ovN(rec.arrived),short:ovN(rec.shortfall),late,early,s1:byShift(rec.module==="guard"?"First":"First"),s2:byShift("Mid"),s3:byShift(rec.module==="guard"?"Overnight":"Late")}; }
-function aggTill(rec){ const cardDiff=ovN(rec.cardInSystem)-ovN(rec.cardSettled);
+function aggTill(rec){
+  /* a settled/held amount against a MISSING system figure is a data error, not an
+     excess — flag it, never count fantasy money into totals */
+  const cardSysMissing = ovN(rec.cardSettled)>0 && ovN(rec.cardInSystem)<=0;
+  const cashSysMissing = (ovN(rec.cashHandedOver)+ovN(rec.cashAtStore))>0 && ovN(rec.cashInSystem)<=0;
+  const cardDiff=cardSysMissing?0:(ovN(rec.cardInSystem)-ovN(rec.cardSettled));
   const cashShort=ovN(rec.declaredShortage), cashOver=ovN(rec.declaredExcess);
   const cardShort=Math.max(0,cardDiff), cardOver=Math.max(0,-cardDiff);
   return {tills:(rec.tills||[]).length,short:cashShort,over:cashOver,card:cardDiff,
     cardShort:cardShort,cardOver:cardOver,net:(cashOver-cashShort)+(cardOver-cardShort),
+    cardSysMissing:cardSysMissing,cashSysMissing:cashSysMissing,
     fakes:(rec.fakeNotes||[]).length}; }
 function aggDep(rec){ return {sys:ovN(rec.cashInSystem),dep:ovN(rec.cashDeposited),varc:ovN(rec.variance),reason:rec.varianceReason||""}; }
 function aggBud(rec){ return {alloc:ovN(rec.allocated),spent:ovN(rec.spentToDate),rem:ovN(rec.remaining)}; }
@@ -4233,6 +4270,19 @@ async function ovPrepReview(code,dy,decision){
     ovRefresh();
   }catch(e){ toast("No connection — not saved."); }
 }
+function ovIncidentStrip(){
+  const codes=ovTableStores().map(s=>s.code);
+  const items=(OVS.incidents||[]).filter(i=>codes.includes(i.code));
+  if(!items.length) return '<div class="ovh-sechead">🚨 Incidents</div><div class="ov-strip"><div class="ov-stat good"><b>0</b><span>incidents logged</span></div></div>';
+  const dayDate=((CONFIG.EVENTS[0]||{days:[]}).days.find(d=>d.day===OVS.day)||{}).date||"";
+  const today=items.filter(i=>i.date===dayDate).length;
+  const hot=items.filter(i=>String(i.follow||"").indexOf("Yes")===0).length;
+  return '<div class="ovh-sechead">🚨 Incidents — tap to open the log</div>'
+    +'<div class="ov-strip" style="cursor:pointer" onclick="ovSetMod(\'incidents\')">'
+    +'<div class="ov-stat'+(items.length?' warn':' good')+'"><b>'+items.length+'</b><span>total this event</span></div>'
+    +'<div class="ov-stat"><b>'+today+'</b><span>on the day in view</span></div>'
+    +'<div class="ov-stat'+(hot?' bad':' good')+'"><b>'+hot+'</b><span>🔥 follow-up pending</span></div></div>';
+}
 function ovPrepStrip(){
   const tomorrow=OVS.tomorrow; if(tomorrow>5) return "";
   const stores=ovTableStores();
@@ -4491,9 +4541,10 @@ function ovHqHome(){
     +(CONFIG.EVENTS[0]||{days:[]}).days.map(d=>{ const fut=d.day>OVS.today;
        return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?(OVS.preEvent?" · starts tomorrow":" · today"):"")+'</button>'; }).join("")+'</div>';
   return daysBar
+    +ovPrepStrip()
+    +ovIncidentStrip()
     +ovNationalStrip()
     +ovAttention()
-    +ovPrepStrip()
     +ovPostStrip()
     +'<div class="ovh-sechead">Cluster scorecard — compliance &amp; sign-off ratio by manager</div>'+ovClusterScore()
     +'<div class="ovh-sechead">Completion by module — tap a bar for the store-wise view</div>'+ovModuleBars()
@@ -4926,13 +4977,13 @@ function ovPeopleReport(){
   const wPct=A.wd?Math.round(A.wa/A.wd*100):null, gPct=A.gd?Math.round(A.ga/A.gd*100):null;
   const stat=(n,l,cls)=>'<div class="ov-stat'+(cls||"")+'"><b>'+n+'</b><span>'+l+'</span></div>';
   const strip='<div class="ov-strip">'
-    +stat(A.wa+' / '+A.wd,'wagers arrived / demanded'+(wPct!=null?' · '+wPct+'%':''),wPct!=null?sevCls(wPct):'')
-    +stat(A.ga+' / '+A.gd,'guards arrived / demanded'+(gPct!=null?' · '+gPct+'%':''),gPct!=null?sevCls(gPct):'')
+    +stat(A.wa+' / '+A.wd+(wPct!=null?' · '+wPct+'%':''),'wagers arrived / demanded',wPct!=null?sevCls(wPct):'')
+    +stat(A.ga+' / '+A.gd+(gPct!=null?' · '+gPct+'%':''),'guards arrived / demanded',gPct!=null?sevCls(gPct):'')
     +stat(A.late,'late arrivals',A.late?' bad':' good')
     +stat(A.early,'early goings',A.early?' warn':' good')
     +stat(Math.round(A.mins/60)+' h','hours worked','')
     +stat(A.low,'low ratings (≤2)',A.low?' bad':' good')
-    +stat(A.supV+' arrived','HO + IT · '+A.supStores+' store'+(A.supStores===1?'':'s')+(A.supLate?' · ⚑ '+A.supLate+' late':'')+(A.supEarly?' · ⚑ '+A.supEarly+' early going':''),(A.supLate||A.supEarly)?' warn':'')
+    +stat(A.supV+' arrived','HO + IT · '+A.supStores+' store'+(A.supStores===1?'':'s')+((A.supLate||A.supEarly)?' · ⚑ '+(A.supLate?A.supLate+' late':'')+(A.supLate&&A.supEarly?', ':'')+(A.supEarly?A.supEarly+' early':''):''),(A.supLate||A.supEarly)?' warn':'')
     +'</div>';
   /* ---- event trend: one row per elapsed day, wager + guard fill bars ---- */
   const trend=(CONFIG.EVENTS[0]||{days:[]}).days.filter(d=>d.day<=OVS.today).map(d=>{
