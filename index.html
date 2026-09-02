@@ -295,6 +295,11 @@ input.locked{background:#F4F6F9;color:var(--ink-soft);text-align:center;font-fam
 .tab{padding:9px 14px;border:1px solid var(--line);border-bottom:none;border-radius:var(--r) var(--r) 0 0;
   background:#FAFBFD;cursor:pointer;font-size:14px;font-weight:600;color:var(--ink-soft);font-family:inherit}
 .tab[aria-selected=true]{background:var(--surface);color:var(--sapphire)}
+.tab-n{display:inline-block;min-width:19px;padding:0 5px;border-radius:9px;font-size:11px;
+  font-weight:800;line-height:18px;text-align:center}
+.tab-n.n-grey{background:#E5E7EB;color:#4B5563}
+.tab-n.n-red{background:#FBEAE9;color:#B3261E}
+.tab-n.n-green{background:#E7F3EC;color:#1B6B4A}
 @media (prefers-reduced-motion:no-preference){
   .card{animation:rise .18s ease-out}
   @keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -405,8 +410,12 @@ const CONFIG = {
   #dayHome .dchip.due{background:#fef3e2;color:#b45309}
   #dayHome .dchip.future{background:#f3f4f6;color:#6b7280}
   #dayHome .dcard-foot{margin-top:10px;font-size:12.5px;font-weight:600;color:#2563eb}
-  #dayHome .task-strip{display:flex;gap:6px;margin-top:8px;overflow-x:auto}
-  #dayHome .ts{flex:1 0 auto;min-width:84px;text-align:center;border:1px solid #eef0f3;border-radius:8px;padding:8px 5px;background:#fbfcfd}
+  /* 2 rows of 4 on a phone, one row of 8 on desktop. Never scrolls sideways —
+     Deposit is the last cell and must never sit off-screen. */
+  #dayHome .task-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px}
+  /* 7 here, not 8: this file's copy of T7 has no "HO + IT attendance" cell. */
+  @media(min-width:700px){ #dayHome .task-strip{grid-template-columns:repeat(7,minmax(0,1fr))} }
+  #dayHome .ts{min-width:0;text-align:center;border:1px solid #eef0f3;border-radius:8px;padding:8px 5px;background:#fbfcfd}
   #dayHome .ts-l{display:flex;align-items:center;justify-content:center;min-height:28px;font-size:11px;color:#6b7280;line-height:1.2}
   #dayHome .ts-s{display:block;font-size:12px;font-weight:700;margin-top:4px;line-height:1.2}
   #dayHome .ts-s.done{color:#16a34a} #dayHome .ts-s.pending{color:#8a8f98}
@@ -1304,13 +1313,18 @@ function renderDayHome(){
     {k:"budget", l:"Budget"}, {k:"till", l:"Till + recon"}, {k:"rating", l:"DW + guard rating"}, {k:"deposit", l:"Deposit"},
   ];
   const SW = { done:{t:"Done",c:"done"}, pending:{t:"Pending",c:"pending"},
-               tomorrow:{t:"Due tomorrow",c:"tomorrow"}, overdue:{t:"Pending",c:"overdue"}, locked:{t:"Locked",c:"locked"} };
+               tomorrow:{t:"Due tomorrow",c:"tomorrow"}, overdue:{t:"Late",c:"overdue"}, locked:{t:"Locked",c:"locked"} };
   const rows = list.map(x => {
     const r = rel(x), stt = dayTaskStatus(x.day);
     let chip, chipCls;
     if(r==="future"){ chip = "Opens "+esc(x.date); chipCls = "future"; }
     else if(r==="today"){ chip = "Open now"; chipCls = "today"; }
-    else { const depDone = stt.deposit==="done"; chip = depDone ? "Complete" : "Deposit pending"; chipCls = depDone ? "today" : "due"; }
+    /* A past day is "Complete" only when every task is filed — not when the deposit
+       alone is in. The chip carries the real count so it can never overstate. */
+    else { const dn = T7.filter(t => stt[t.k]==="done").length, dtot = T7.length;
+           const allDone = dn===dtot, depDone = stt.deposit==="done";
+           chip = allDone ? "Complete" : dn+"/"+dtot+(depDone ? "" : " · deposit due");
+           chipCls = allDone ? "today" : "due"; }
     const strip = T7.map(t => { const s = SW[stt[t.k]] || SW.pending;
       return '<div class="ts"><span class="ts-l">'+esc(t.l)+'</span><span class="ts-s '+s.c+'">'+s.t+'</span></div>'; }).join("");
     const clickable = r!=="future";
@@ -3430,7 +3444,34 @@ async function ovStart(role, mgr, actMgr, dept){ OVROLE=role; OVOPEN=null; OVEXP
 async function ovRefresh(){ try{ const o=await ovFetch(); if(o.ok){ OVPAYLOAD=o; ovBuild(); ovRender(); } }catch(e){} }
 function ovScopeStores(){ if(OVROLE==="cluster") return OVS.stores.filter(s=>s.region===OVREGION);
   return OVS.stores; }   /* hq = all; regional = server already sends ONLY their region's stores */
-function ovRender(){ const box=$(OVCONTAINER); if(!box) return; box.innerHTML = OVOPEN ? ovDrill(OVOPEN) : ovLens(); window.scrollTo(0,0); }
+function ovRender(){ const box=$(OVCONTAINER); if(!box) return; box.innerHTML = OVOPEN ? ovDrill(OVOPEN) : ovLens();
+  /* counts are decoration — never let a count bug take the dashboard down */
+  try{ ovTabCounts(); }catch(e){}
+  window.scrollTo(0,0); }
+
+/* Live counts on the review tabs, so "Action needed" can be read without being
+   opened. Uses ovPassFilter() — the same predicate the tab itself applies. */
+function ovTabCounts(){
+  const tabs=document.querySelectorAll("#review .tab");
+  if(!tabs.length || !OVS) return;
+  const stores=ovTableStores();
+  const n={A:stores.length,B:0,C:0,D:0};
+  stores.forEach(s=>{
+    if(ovPassFilter(s.code,"action"))     n.B++;
+    if(ovPassFilter(s.code,"exceptions")) n.C++;
+    if(ovPassFilter(s.code,"signed"))     n.D++; });
+  const LAB={A:"All stores",B:"Action needed",C:"Exceptions",D:"Signed off",E:"Reports"};
+  tabs.forEach(t=>{
+    const k=t.dataset.tab, lab=LAB[k];
+    if(!lab) return;
+    if(k==="E"){ t.textContent=lab; return; }              /* Reports is a destination, not a filter */
+    const c=n[k];
+    const tone = k==="A" ? "n-grey"
+               : k==="D" ? ((c===n.A && c) ? "n-green" : "n-grey")
+               : (c ? "n-red" : "n-green");                /* 0 to action on is a good state */
+    t.innerHTML = esc(lab)+' <span class="tab-n '+tone+'">'+c+'</span>';
+  });
+}
 function ovOpen(code){ OVOPEN=code; OVEXPAND={}; ovRender(); }
 function ovBack(){ OVOPEN=null; ovRender(); }
 function ovToggle(code,key){ const k=code+"|"+key; OVEXPAND[k]=!OVEXPAND[k]; ovRender(); }
@@ -4262,8 +4303,22 @@ function ovCompliance(code,dy){
   return {filed:have.length,req:req.length,pct:req.length?Math.round(have.length/req.length*100):0,missing:missing,
           depFiled:filed.indexOf("deposit")>-1};
 }
-function ovPctBadge(pct){ const c=pct>=90?["#E7F3EC","#1B6B4A"]:pct>=70?["#FDF3E2","#8A5A00"]:["#FBEAE9","#B3261E"];
-  return '<span style="background:'+c[0]+';color:'+c[1]+';padding:2px 10px;border-radius:8px;font-weight:800">'+pct+'%</span>'; }
+/* ============ ONE severity scale for every percentage in oversight ============
+   Before this there were four: badges went green at >=90, module bars at 100
+   (mid-green at >=70), the cluster sign-off bar at >=50, and the national strip
+   at >=90. The same 60% could therefore read green in one panel and red in
+   another. This is now the single definition — change it here and everywhere
+   follows. Compliance target for the event is 100%, so nothing below 80 is
+   ever "amber" and only a complete day is green. */
+const SEV = { ok:  { bg:"#E7F3EC", fg:"#1B6B4A", solid:"#1B6B4A", cls:" good" },
+              warn:{ bg:"#FDF3E2", fg:"#8A5A00", solid:"#BA7517", cls:" warn" },
+              bad: { bg:"#FBEAE9", fg:"#B3261E", solid:"#B3261E", cls:" bad"  } };
+function sev(pct){ const p=Number(pct)||0; return p>=100 ? "ok" : p>=80 ? "warn" : "bad"; }
+function sevC(pct){ return SEV[sev(pct)]; }
+function sevCls(pct){ return SEV[sev(pct)].cls; }
+
+function ovPctBadge(pct){ const c=sevC(pct);
+  return '<span style="background:'+c.bg+';color:'+c.fg+';padding:2px 10px;border-radius:8px;font-weight:800">'+pct+'%</span>'; }
 function ovNetFmt(n){ return n===0?'<span style="color:#6b7280">0</span>'
   :'<span style="color:'+(n<0?'#B3261E':'#1B6B4A')+';font-weight:700">'+(n>0?'+':'−')+pkr(Math.abs(n))+'</span>'; }
 function ovDayIncidents(dy){ const ev=CONFIG.EVENTS[0]||{days:[]}; const d=(ev.days||[]).find(x=>String(x.day)===String(dy));
@@ -4279,7 +4334,7 @@ function ovNationalStrip(){
   const avg=stores.length?Math.round(pctSum/stores.length):0;
   const inc=ovDayIncidents(dy), hot=inc.filter(i=>i.prio||i.ongoing).length;
   return '<div class="ov-strip">'
-    +'<div class="ov-stat'+(avg>=90?" good":avg<70?" bad":" warn")+'"><b>'+avg+'%</b><span>avg compliance</span></div>'
+    +'<div class="ov-stat'+sevCls(avg)+'"><b>'+avg+'%</b><span>avg compliance</span></div>'
     +'<div class="ov-stat"><b>'+full+'/'+stores.length+'</b><span>fully filed</span></div>'
     +'<div class="ov-stat'+(signed===stores.length&&stores.length?" good":"")+'"><b>'+signed+'/'+stores.length+'</b><span>signed off</span></div>'
     +'<div class="ov-stat'+(net<0?" bad":net>0?" good":"")+'"><b>'+(net===0?"0":(net>0?"+":"−")+fmt(Math.abs(net)))+'</b><span>net impact PKR</span></div>'
@@ -4319,7 +4374,7 @@ function ovClusterScore(){
   }).sort((a,b)=>b.avg-a.avg||a.mgr.localeCompare(b.mgr));
   const bar=(sg,n)=>{ const p=n?Math.round(sg/n*100):0;
     return '<div style="background:#eef0f4;border-radius:5px;height:14px;position:relative;min-width:90px">'
-      +'<div style="width:'+p+'%;background:'+(p===100?'#1B6B4A':p>=50?'#2f7d5a':'#BA7517')+';height:14px;border-radius:5px"></div>'
+      +'<div style="width:'+p+'%;background:'+sevC(p).solid+';height:14px;border-radius:5px"></div>'
       +'<span style="position:absolute;right:5px;top:0;font-size:10.5px;color:#4b5563;font-weight:700;line-height:14px">'+sg+'/'+n+'</span></div>'; };
   let tot={n:0,pctSum:0,signed:0,net:0};
   rows.forEach(r=>{ tot.n+=r.list.length; tot.pctSum+=r.avg*r.list.length; tot.signed+=r.signed; tot.net+=r.net; });
@@ -4348,7 +4403,7 @@ function ovModuleBars(){
     const k=m[0]; const n=stores.filter(s=>((((OVS.filed5[s.code]||{})[dy])||[]).indexOf(k)>-1)).length;
     const p=stores.length?Math.round(n/stores.length*100):0;
     const due=(k!=="deposit")||ovDepositDue(dy);
-    const col=p===100?'#1B6B4A':p>=70?'#2f7d5a':p>=40?'#BA7517':'#B3261E';
+    const col=sevC(p).solid;
     return '<div style="cursor:pointer;margin:7px 0" onclick="ovMatrix(\''+k+'\')">'
       +'<div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span style="font-weight:600">'+esc(m[1])+(due?'':' <small style="color:#8A5A00">· due tomorrow morning</small>')+'</span><span style="color:#4b5563;font-weight:700">'+n+'/'+stores.length+'</span></div>'
       +'<div style="background:#eef0f4;border-radius:5px;height:13px"><div style="width:'+p+'%;background:'+(due?col:'#9aa3af')+';height:13px;border-radius:5px"></div></div></div>';
@@ -4372,13 +4427,17 @@ function ovModMatrix(){
     +'<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Store</th><th>Cluster manager</th><th>Status</th><th>Summary'+(OVS.day?'':'')+'</th><th>Updated</th></tr>'+trs+'</table></div>'
     +'<p class="meta" style="margin:8px 2px 0">Not-filed stores are listed first. Tap a row to open the store\'s full day.</p>';
 }
+/* THE filter predicate for the review tabs. The tab counts and the list the tab
+   opens must never disagree, so both go through this one function. */
+function ovPassFilter(code,f){ const st=ovStatus(code);
+  if(f==="action")     return st==="pending"||st==="flagged"||st==="partial"||st==="notsub";
+  if(f==="exceptions") return st==="flagged"||st==="pending";
+  if(f==="signed")     return st==="signed";
+  return true; }
+
 function ovStoreRank(){
   const stores=ovTableStores(), dy=OVS.day;
-  const passF=(code)=>{ const st=ovStatus(code); if(OVFILTER==="all")return true;
-    if(OVFILTER==="action") return st==="pending"||st==="flagged"||st==="partial"||st==="notsub";
-    if(OVFILTER==="exceptions") return st==="flagged"||st==="pending";
-    if(OVFILTER==="signed") return st==="signed"; return true; };
-  const rows=stores.filter(s=>passF(s.code)).map(s=>{
+  const rows=stores.filter(s=>ovPassFilter(s.code,OVFILTER)).map(s=>{
     const c=ovCompliance(s.code,dy), sg=(OVS.signed5[s.code]||{})[String(dy)], ex=OVS.data[s.code]?ovModExc(s.code):0;
     return {s:s,c:c,sg:sg,ex:ex,net:((OVS.net5[s.code]||{})[dy])||0};
   }).sort((a,b)=>a.c.pct-b.c.pct||b.ex-a.ex||a.s.name.localeCompare(b.s.name));
@@ -4491,7 +4550,7 @@ function ovClusterHomeClassic(){
       +'<div class="ovh-sub">'+esc(x.region)+' · '+ovFilled(x.code)+' of '+OV_MODS.length+' modules filed</div></div>'
       +'<div class="ovh-badges">'+ovHomeBadges(x.code)+'</div></div>'; }).join("");
   const strip='<div class="ov-strip">'
-    +'<div class="ov-stat'+(clPct>=90?' good':clPct<70?' bad':' warn')+'"><b>'+clPct+'%</b><span>your compliance</span></div>'
+    +'<div class="ov-stat'+sevCls(clPct)+'"><b>'+clPct+'%</b><span>your compliance</span></div>'
     +'<div class="ov-stat'+(clSigned===stores.length&&stores.length?' good':'')+'"><b>'+clSigned+'/'+stores.length+'</b><span>signed off</span></div>'
     +'<div class="ov-stat"><b>'+filed+'/'+stores.length+'</b><span>stores filed</span></div>'
     +'<div class="ov-stat'+(banked<filed?' warn':' good')+'"><b>'+banked+'</b><span>deposits banked</span></div>'
