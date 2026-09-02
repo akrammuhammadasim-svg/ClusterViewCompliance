@@ -3237,12 +3237,12 @@ function ovBuild(){
 
   /* 5-day structures (zero-filled where nothing filed) */
   OVS.cash={}; OVS.picks5={}; OVS.deposit5={}; OVS.wager5={}; OVS.guard5={}; OVS.rating5={}; OVS.budget5={}; OVS.budCats={};
-  OVS.tillLines=[]; OVS.filed5={}; OVS.net5={}; OVS.prep5={}; OVS.postAll={};
+  OVS.tillLines=[]; OVS.filed5={}; OVS.net5={}; OVS.prep5={}; OVS.postAll={}; OVS.support5={};
   const today=bd;
   OVS.stores.forEach(st=>{
     OVS.cash[st.code]={}; OVS.picks5[st.code]={}; OVS.deposit5[st.code]={};
     OVS.wager5[st.code]={}; OVS.guard5[st.code]={}; OVS.rating5[st.code]={}; OVS.budget5[st.code]={};
-    OVS.filed5[st.code]={}; OVS.net5[st.code]={}; OVS.prep5[st.code]={};
+    OVS.filed5[st.code]={}; OVS.net5[st.code]={}; OVS.prep5[st.code]={}; OVS.support5[st.code]={};
     let cum=0, alloc=0;
     for(let dy=1;dy<=5;dy++){
       const rows=rowsOf(st.code,dy);
@@ -3315,6 +3315,15 @@ function ovBuild(){
       rt.flagged=(OVS.wager5[st.code][dy].late||0)+(OVS.wager5[st.code][dy].early||0)
                 +(OVS.guard5[st.code][dy].late||0)+(OVS.guard5[st.code][dy].early||0);
       OVS.rating5[st.code][dy]=rt;
+      /* HO + IT support attendance, day-wise (feeds the People report) */
+      (function(){ const supR=rows.support?rows.support.data:null;
+        const SUP={filed:!!supR,visits:0,late:0,early:0,ppl:[]};
+        if(supR){ [["IT",supR.it],["HO",supR.ho]].forEach(function(pair){ (pair[1]||[]).forEach(function(v){
+          if(!v||(!v.name&&!v.actIn)) return;
+          const fl=personFlags(v.reqIn,v.reqOut,v.actIn,v.actOut);
+          SUP.visits++; if(fl.indexOf("Late arrival")>-1)SUP.late++; if(fl.indexOf("Early going")>-1)SUP.early++;
+          SUP.ppl.push({who:pair[0],n:v.name||"",ct:v.contact||"",ri:v.reqIn||"",ro:v.reqOut||"",ai:v.actIn||"",ao:v.actOut||"",fl:fl}); }); }); }
+        OVS.support5[st.code][dy]=SUP; })();
       /* budget — real per-category spend, never assumed mixes */
       const bg=rows.budget?rows.budget.data:null;
       const daySpend=bg?Number(bg.dayTotal||0):0;
@@ -3658,7 +3667,7 @@ function ovExit(){ location.reload(); }
 
 /* ---- module-first cross-store tables (key fields on one screen) ---- */
 let OVMOD="home", OVDAYPICK=null, OVREGFILTER="", OVCASHDAY=null, OVPICKDAY=2, OVDEPDAY=2, OVSHIFTDAY=2, OVRATEDAY=2, OVBUDDAY=2, OVMATKEY="picks", OVCLEXP={}, OVSHIFTEXP={}, OVRATEEXP={}, OVPREPDAY=null;
-const OV_LENSES=[["overview","Overview"],["prep","Sale prep"],["postlens","Post-sale"],["picks","Pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Guards"],["dayend","Till & recon"],["deposit","Deposit"],["budget","Budget"],["performance","Rating"],["cash","Cash report"],["cashiers","Cashier variance"],["incidents","Incidents"],["signoffs","Sign-offs"],["approvals","Approvals"]];
+const OV_LENSES=[["overview","Overview"],["prep","Sale prep"],["postlens","Post-sale"],["picks","Pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Guards"],["people","People report"],["dayend","Till & recon"],["deposit","Deposit"],["budget","Budget"],["performance","Rating"],["cash","Cash report"],["cashiers","Cashier variance"],["incidents","Incidents"],["signoffs","Sign-offs"],["approvals","Approvals"]];
 
 function ovTableStores(){ return ovScopeStores().filter(s=> !OVREGFILTER || s.region===OVREGFILTER); }
 function ovDiff(from,to){ return '<span class="ov-old">'+esc(from)+'</span><span class="ov-arw">→</span><span class="ov-new">'+esc(to)+'</span>'; }
@@ -4506,6 +4515,7 @@ function ovDoors(){
       +'<button onclick="ovSetMod(\'cash\')">Cash report</button>'
       +'<button onclick="ovSetMod(\'cashiers\')">Cashier variance</button></div>'
     +'<div class="ovh-door"><h4>👥 People</h4>'
+      +'<button onclick="ovSetMod(\'people\')">📊 People report — day &amp; store</button>'
       +'<button onclick="ovSetMod(\'shift_wager\')">Daily wagers</button>'
       +'<button onclick="ovSetMod(\'shift_guard\')">Security guards</button>'
       +'<button onclick="ovSetMod(\'performance\')">Staff rating</button>'
@@ -4621,6 +4631,7 @@ function ovLens(){
   else if(OVMOD==="picks") body=ovPickReport();
   else if(OVMOD==="cashiers") body=ovCashierReport();
   else if(OVMOD==="deposit") body=ovDepositReport();
+  else if(OVMOD==="people") body=ovPeopleReport();
   else if(OVMOD==="shift_wager") body=ovShiftReport("wager");
   else if(OVMOD==="shift_guard") body=ovShiftReport("guard");
   else if(OVMOD==="performance") body=ovRatingReport();
@@ -4839,6 +4850,148 @@ function ovShiftPeopleCsv(mod){
   ovTableStores().filter(s=>D&&D[s.code]).forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=D[s.code][dy];
     (f.ppl||[]).forEach(p=>rows.push([s.name,s.region,"Day "+dy,p.n,p.ct||"",p.sh,p.g,p.i?fmt12(p.i):"",p.o?fmt12(p.o):"",p.m!=null?fmtMins(p.m):"",p.fl.join(" | ")])); } });
   downloadCsv((guard?"guards":"wagers")+"-employee-wise.csv",rows);
+}
+let OVPPLDAY=null, OVPPLEXP={};
+function ovSetPplDay(d){ OVPPLDAY=d; OVPPLEXP={}; ovRender(); }
+function ovPplToggle(code){ OVPPLEXP[code]=!OVPPLEXP[code]; ovRender(); }
+function ovPplDay(){ return OVPPLDAY!=null?OVPPLDAY:OVS.day; }
+/* arrived/demanded cell: number + % + a bar coloured by the ONE sev scale */
+function ovPplBar(arr,dem,filed){
+  if(!filed) return '<span style="color:#8a8f98">not filed</span>';
+  if(!dem) return '<span style="color:#6b7280">0 demanded</span>';
+  const pct=Math.round(arr/dem*100), c=sevC(pct);
+  return '<div style="min-width:118px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px"><b>'+arr+' / '+dem+'</b><b style="color:'+c.fg+'">'+pct+'%</b></div>'
+    +'<div style="height:6px;border-radius:4px;background:#eef0f3;margin-top:3px"><div style="height:6px;border-radius:4px;width:'+Math.min(pct,100)+'%;background:'+c.solid+'"></div></div></div>';
+}
+/* --- expanded-row visuals: aligned mini-tables inside section cards --- */
+function ovPplCell(v,cls){ return '<td style="padding:4px 8px;border-bottom:1px solid #f1f3f5;white-space:nowrap;'+(cls||'')+'">'+v+'</td>'; }
+function ovPplPersonTable(f){
+  if(!(f.ppl||[]).length) return '<div style="color:#6b7280;font-size:12.5px;padding:6px 2px">Filed without named people.</div>';
+  const head='<tr>'+["Name","Shift","Scheduled","In","Out","Hours",""].map(h=>'<th style="text-align:left;padding:4px 8px;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb">'+h+'</th>').join("")+'</tr>';
+  const rows=f.ppl.map(p=>{
+    const late=p.fl.indexOf("Late arrival")>-1, early=p.fl.indexOf("Early going")>-1;
+    return '<tr>'
+      +ovPplCell('<b>'+esc(p.n||"(no name)")+'</b>'+(p.ct?'<br><small style="color:#6b7280">☎ '+esc(p.ct)+'</small>':'')+((p.co||p.g)?'<br><small style="color:#6b7280">'+esc(p.co||p.g)+'</small>':''),'white-space:normal;min-width:110px')
+      +ovPplCell(esc(p.sh||"—"))
+      +ovPplCell((p.si||p.so)?('<small>'+(p.si?fmt12(p.si):'—')+'–'+(p.so?fmt12(p.so):'—')+'</small>'):'<small style="color:#9aa0a6">—</small>')
+      +ovPplCell(p.i?fmt12(p.i):'—', late?'color:#B3261E;font-weight:800':'')
+      +ovPplCell(p.o?fmt12(p.o):'—', early?'color:#B3261E;font-weight:800':'')
+      +ovPplCell(p.m!=null?'<b>'+fmtMins(p.m)+'</b>':'—')
+      +ovPplCell(p.fl.length?p.fl.map(x=>'<span class="ov-echip">⚑ '+esc(x)+'</span>').join(" "):'<span style="color:#1B6B4A">✓</span>')
+      +'</tr>'; }).join("");
+  return '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">'+head+rows+'</table></div>';
+}
+function ovPplSupTable(su){
+  if(!(su.ppl||[]).length) return '';
+  const head='<tr>'+["","Name","Required","In","Out",""].map(h=>'<th style="text-align:left;padding:4px 8px;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb">'+h+'</th>').join("")+'</tr>';
+  const rows=su.ppl.map(v=>{
+    const late=v.fl.indexOf("Late arrival")>-1, early=v.fl.indexOf("Early going")>-1;
+    return '<tr>'
+      +ovPplCell('<span style="background:#eef2f9;color:#17457F;font-weight:800;font-size:10.5px;padding:2px 7px;border-radius:8px">'+v.who+'</span>')
+      +ovPplCell('<b>'+esc(v.n||"(no name)")+'</b>'+(v.ct?'<br><small style="color:#6b7280">☎ '+esc(v.ct)+'</small>':''),'white-space:normal;min-width:110px')
+      +ovPplCell('<small>'+(v.ri?fmt12(v.ri):'—')+'–'+(v.ro?fmt12(v.ro):'—')+'</small>')
+      +ovPplCell(v.ai?fmt12(v.ai):'—', late?'color:#B3261E;font-weight:800':'')
+      +ovPplCell(v.ao?fmt12(v.ao):'—', early?'color:#B3261E;font-weight:800':'')
+      +ovPplCell(v.fl.length?v.fl.map(x=>'<span class="ov-echip">⚑ '+esc(x)+'</span>').join(" "):'<span style="color:#1B6B4A">✓</span>')
+      +'</tr>'; }).join("");
+  return '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">'+head+rows+'</table></div>';
+}
+function ovPplSection(icon,title,badgeHtml,inner,accent){
+  return '<div style="background:#fff;border:1px solid #e5e7eb;border-left:3px solid '+(accent||'#17457F')+';border-radius:10px;padding:10px 12px;min-width:0">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px"><b style="font-size:12.5px">'+icon+' '+title+'</b><span>'+ (badgeHtml||'') +'</span></div>'+inner+'</div>';
+}
+function ovPplEmpty(msg){ return '<div style="border:1.5px dashed #d7dbe2;border-radius:8px;padding:10px;text-align:center;color:#8a8f98;font-size:12.5px">'+msg+'</div>'; }
+function ovPplBadge(txt,kind){ const k=kind==="bad"?["#FBEAE9","#B3261E"]:kind==="ok"?["#E7F3EC","#1B6B4A"]:["#F1F3F5","#4B5563"];
+  return '<span style="background:'+k[0]+';color:'+k[1]+';font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:8px;margin-left:4px">'+txt+'</span>'; }
+function ovPeopleReport(){
+  const dy=ovPplDay(), stores=ovTableStores();
+  const btns=(CONFIG.EVENTS[0]||{days:[]}).days.map(d=>{const fut=d.day>OVS.today;
+    return '<button class="ov-daybtn'+(d.day===dy?" on":"")+'"'+(fut?' disabled style="opacity:.4"':' onclick="ovSetPplDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?" · today":"")+'</button>';}).join("");
+  /* ---- day-level aggregates across the scope ---- */
+  const A={wd:0,wa:0,gd:0,ga:0,late:0,early:0,mins:0,low:0,supV:0,supLate:0,supEarly:0,supStores:0,wFiled:0,gFiled:0};
+  const list=stores.map(s=>{
+    const w=(OVS.wager5[s.code]||{})[dy]||{dem:0,arr:0,late:0,early:0,mins:0,ppl:[]};
+    const g=(OVS.guard5[s.code]||{})[dy]||{dem:0,arr:0,late:0,early:0,mins:0,ppl:[]};
+    const r=(OVS.rating5[s.code]||{})[dy]||{people:0,low:0};
+    const su=(OVS.support5[s.code]||{})[dy]||{filed:false,visits:0,late:0,ppl:[]};
+    const wF=!!(w.ppl&&(w.dem||w.arr||w.ppl.length)), gF=!!(g.ppl&&(g.dem||g.arr||g.ppl.length));
+    if(wF){A.wFiled++;A.wd+=w.dem;A.wa+=w.arr;}
+    if(gF){A.gFiled++;A.gd+=g.dem;A.ga+=g.arr;}
+    A.late+=(w.late||0)+(g.late||0); A.early+=(w.early||0)+(g.early||0);
+    A.mins+=(w.mins||0)+(g.mins||0); A.low+=(r.low||0);
+    if(su.filed){A.supStores++;A.supV+=su.visits;A.supLate+=su.late;A.supEarly+=(su.early||0);}
+    const fillW=w.dem?w.arr/w.dem:1, fillG=g.dem?g.arr/g.dem:1;
+    return {s,w,g,r,su,wF,gF,worst:Math.min(wF?fillW:1.01,gF?fillG:1.01)};
+  }).sort((x,y)=>x.worst-y.worst||((y.w.late||0)+(y.g.late||0))-((x.w.late||0)+(x.g.late||0))||x.s.name.localeCompare(y.s.name));
+  const wPct=A.wd?Math.round(A.wa/A.wd*100):null, gPct=A.gd?Math.round(A.ga/A.gd*100):null;
+  const stat=(n,l,cls)=>'<div class="ov-stat'+(cls||"")+'"><b>'+n+'</b><span>'+l+'</span></div>';
+  const strip='<div class="ov-strip">'
+    +stat(A.wa+' / '+A.wd,'wagers arrived / demanded'+(wPct!=null?' · '+wPct+'%':''),wPct!=null?sevCls(wPct):'')
+    +stat(A.ga+' / '+A.gd,'guards arrived / demanded'+(gPct!=null?' · '+gPct+'%':''),gPct!=null?sevCls(gPct):'')
+    +stat(A.late,'late arrivals',A.late?' bad':' good')
+    +stat(A.early,'early goings',A.early?' warn':' good')
+    +stat(Math.round(A.mins/60)+' h','hours worked','')
+    +stat(A.low,'low ratings (≤2)',A.low?' bad':' good')
+    +stat(A.supV+' arrived','HO + IT · '+A.supStores+' store'+(A.supStores===1?'':'s')+(A.supLate?' · ⚑ '+A.supLate+' late':'')+(A.supEarly?' · ⚑ '+A.supEarly+' early going':''),(A.supLate||A.supEarly)?' warn':'')
+    +'</div>';
+  /* ---- event trend: one row per elapsed day, wager + guard fill bars ---- */
+  const trend=(CONFIG.EVENTS[0]||{days:[]}).days.filter(d=>d.day<=OVS.today).map(d=>{
+    let wd=0,wa=0,gd=0,ga=0;
+    stores.forEach(s=>{ const w=(OVS.wager5[s.code]||{})[d.day]||{}, g=(OVS.guard5[s.code]||{})[d.day]||{};
+      wd+=w.dem||0; wa+=w.arr||0; gd+=g.dem||0; ga+=g.arr||0; });
+    const wp=wd?Math.round(wa/wd*100):null, gp=gd?Math.round(ga/gd*100):null;
+    const bar=(p)=>p==null?'<span style="color:#8a8f98;font-size:12px">no data</span>'
+      :'<div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:7px;border-radius:4px;background:#eef0f3"><div style="height:7px;border-radius:4px;width:'+Math.min(p,100)+'%;background:'+sevC(p).solid+'"></div></div><b style="font-size:12px;color:'+sevC(p).fg+';min-width:34px;text-align:right">'+p+'%</b></div>';
+    return '<div style="display:grid;grid-template-columns:70px 1fr 1fr;gap:10px;align-items:center;padding:5px 0;border-bottom:1px solid #f1f3f5"><b style="font-size:12.5px">Day '+d.day+'</b><div><small style="color:#6b7280">Wagers</small>'+bar(wp)+'</div><div><small style="color:#6b7280">Guards</small>'+bar(gp)+'</div></div>';
+  }).join("");
+  /* ---- store-level table ---- */
+  const trs=list.map(o=>{
+    const open=OVPPLEXP[o.s.code];
+    const pl=(o.w.late||0)+(o.g.late||0), pe=(o.w.early||0)+(o.g.early||0);
+    const hrs=((o.w.mins||0)+(o.g.mins||0));
+    let tr='<tr onclick="ovPplToggle(\''+o.s.code+'\')"><td class="stk">'+esc(o.s.name)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td><td class="muted">'+esc(o.s.region)+'</td>'
+      +'<td>'+ovPplBar(o.w.arr||0,o.w.dem||0,o.wF)+'</td>'
+      +'<td>'+ovPplBar(o.g.arr||0,o.g.dem||0,o.gF)+'</td>'
+      +'<td class="'+((pl+pe)?'cell-bad':'muted')+'">'+((pl||pe)?('⚑ '+(pl?pl+' late':'')+(pl&&pe?' · ':'')+(pe?pe+' early':'')):'·')+'</td>'
+      +'<td class="muted">'+(hrs?Math.round(hrs/60)+' h':'·')+'</td>'
+      +'<td class="'+(o.r.low?'cell-bad':'muted')+'">'+(o.r.low?('⚑ '+o.r.low+' low'):(o.r.people?o.r.people+' rated':'·'))+'</td>'
+      +'<td class="'+(o.su.filed?((o.su.late||o.su.early)?'cell-warn':''):'muted')+'">'+(o.su.filed?(o.su.visits+' arrived'+(o.su.late?' · ⚑ '+o.su.late+' late':'')+(o.su.early?' · ⚑ '+o.su.early+' early':'')):'·')+'</td></tr>';
+    if(open){
+      const wB=(o.wF?ovPplBadge((o.w.arr||0)+' of '+(o.w.dem||0),(o.w.dem&&o.w.arr>=o.w.dem)?"ok":"bad"):'')
+        +((o.w.late||0)?ovPplBadge('⚑ '+o.w.late+' late',"bad"):'')+((o.w.early||0)?ovPplBadge('⚑ '+o.w.early+' early',"bad"):'');
+      const gB=(o.gF?ovPplBadge((o.g.arr||0)+' of '+(o.g.dem||0),(o.g.dem&&o.g.arr>=o.g.dem)?"ok":"bad"):'')
+        +((o.g.late||0)?ovPplBadge('⚑ '+o.g.late+' late',"bad"):'')+((o.g.early||0)?ovPplBadge('⚑ '+o.g.early+' early',"bad"):'');
+      const sB=(o.su.filed?ovPplBadge(o.su.visits+' arrived',(o.su.late||o.su.early)?"bad":"ok"):'')
+        +((o.su.late||0)?ovPplBadge('⚑ '+o.su.late+' late',"bad"):'')+((o.su.early||0)?ovPplBadge('⚑ '+o.su.early+' early',"bad"):'');
+      tr+='<tr class="ov-sub"><td colspan="8" style="background:#f4f6f9;padding:12px 14px;text-align:left" onclick="event.stopPropagation()">'
+        +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px">'
+        +ovPplSection('👷','Daily wagers',wB,(o.wF?ovPplPersonTable(o.w):ovPplEmpty('Not filed yet')),'#BA7517')
+        +ovPplSection('🛡','Security guards',gB,(o.gF?ovPplPersonTable(o.g):ovPplEmpty('Not filed yet')),'#17457F')
+        +ovPplSection('🧑‍💻','HO + IT attendance',sB,(o.su.filed?(ovPplSupTable(o.su)||ovPplEmpty('Filed — no people listed')):ovPplEmpty('No HO / IT attendance filed')),'#1B6B4A')
+        +'</div>'
+        +'<div style="margin-top:9px"><a style="color:#1f4e8c;cursor:pointer;font-weight:700;font-size:12.5px" onclick="event.stopPropagation();ovOpen(\''+o.s.code+'\')">Open the store\'s full day ›</a></div>'
+        +'</td></tr>';
+    }
+    return tr; }).join("");
+  return '<div class="ov-cashbar"><div><b>📊 People report</b> — wagers · guards · HO/IT · '+(OVREGFILTER||OVREGION||"all stores")+' · Day '+dy+'</div>'
+    +'<div style="display:flex;gap:6px"><button class="btn btn-line btn-sm" onclick="ovPeopleCsv()">⬇ Day summary CSV</button><button class="btn btn-line btn-sm" onclick="ovTimekeepCsv(\'wager\')">⬇ Wagers timekeeping</button><button class="btn btn-line btn-sm" onclick="ovTimekeepCsv(\'guard\')">⬇ Guards timekeeping</button></div></div>'
+    +'<div class="ov-daysel">Day: '+btns+'</div>'
+    +strip
+    +'<div class="card" style="margin:0 0 12px"><div class="card-body"><div style="font-weight:800;font-size:12.5px;margin-bottom:4px">Attendance across the event — demanded met, day by day</div>'+(trend||'<span class="meta">No days elapsed yet.</span>')+'</div></div>'
+    +'<div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Store</th><th>Cluster manager</th><th>Daily wagers</th><th>Guards</th><th>Punctuality</th><th>Hours</th><th>Rating</th><th>HO + IT</th></tr>'+trs+'</table></div>'
+    +'<p class="meta" style="margin:8px 2px 0">Worst attendance floats to the top. Tap a store row for the name-wise detail — every person, scheduled vs actual in/out, hours and ⚑ flags (15-min grace).</p>';
+}
+function ovPeopleCsv(){
+  const dy=ovPplDay();
+  const rows=[["Store","Cluster manager","Day","Wagers demanded","Wagers arrived","Wagers %","Guards demanded","Guards arrived","Guards %","Late arrivals","Early goings","Hours worked","People rated","Low ratings","HO+IT arrived","HO+IT late arrivals","HO+IT early goings"]];
+  ovTableStores().forEach(s=>{
+    const w=(OVS.wager5[s.code]||{})[dy]||{}, g=(OVS.guard5[s.code]||{})[dy]||{}, r=(OVS.rating5[s.code]||{})[dy]||{}, su=(OVS.support5[s.code]||{})[dy]||{};
+    rows.push([s.name,s.region,"Day "+dy,w.dem||0,w.arr||0,w.dem?Math.round((w.arr||0)/w.dem*100)+"%":"",
+      g.dem||0,g.arr||0,g.dem?Math.round((g.arr||0)/g.dem*100)+"%":"",
+      (w.late||0)+(g.late||0),(w.early||0)+(g.early||0),Math.round(((w.mins||0)+(g.mins||0))/60),
+      r.people||0,r.low||0,su.visits||0,su.late||0,su.early||0]);
+  });
+  downloadCsv("people-report-day"+dy+".csv",rows);
 }
 function ovShiftReport(mod){
   const D=OVS[mod+"5"]; const stores=ovTableStores().filter(s=>D&&D[s.code]);
