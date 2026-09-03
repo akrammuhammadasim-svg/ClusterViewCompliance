@@ -3746,7 +3746,7 @@ function ovExit(){ location.reload(); }
 
 /* ---- module-first cross-store tables (key fields on one screen) ---- */
 let OVMOD="home", OVDAYPICK=null, OVREGFILTER="", OVCASHDAY=null, OVPICKDAY=2, OVDEPDAY=2, OVSHIFTDAY=2, OVRATEDAY=2, OVBUDDAY=2, OVMATKEY="picks", OVCLEXP={}, OVSHIFTEXP={}, OVRATEEXP={}, OVPREPDAY=null;
-const OV_LENSES=[["overview","Overview"],["prep","Sale prep"],["postlens","Post-sale"],["picks","Pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Guards"],["people","People report"],["dayend","Till & recon"],["deposit","Deposit"],["budget","Budget"],["performance","Rating"],["cash","Cash report"],["cashiers","Cashier variance"],["incidents","Incidents"],["signoffs","Sign-offs"],["approvals","Approvals"]];
+const OV_LENSES=[["overview","Overview"],["prep","Sale prep"],["postlens","Post-sale"],["picks","Pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Guards"],["people","People report"],["dayend","Till & recon"],["deposit","Deposit variance"],["budget","Budget"],["performance","Rating"],["cash","Cash & card"],["cashiers","Cashier variance"],["incidents","Incidents"],["signoffs","Sign-offs"],["approvals","Approvals"]];
 
 function ovTableStores(){ return ovScopeStores().filter(s=> !OVREGFILTER || s.region===OVREGFILTER); }
 function ovDiff(from,to){ return '<span class="ov-old">'+esc(from)+'</span><span class="ov-arw">→</span><span class="ov-new">'+esc(to)+'</span>'; }
@@ -4624,7 +4624,7 @@ function ovDoors(){
       +'<button onclick="ovSetMod(\'dayend\')">Till &amp; reconciliation</button>'
       +'<button onclick="ovSetMod(\'deposit\')">Bank deposits</button>'
       +'<button onclick="ovSetMod(\'budget\')">Event budget</button>'
-      +'<button onclick="ovSetMod(\'cash\')">Cash report</button>'
+      +'<button onclick="ovSetMod(\'cash\')">Cash &amp; card report</button>'
       +'<button onclick="ovSetMod(\'cashiers\')">Cashier variance</button></div>'
     +'<div class="ovh-door"><h4>👥 People</h4>'
       +'<button onclick="ovSetMod(\'people\')">📊 People report — day &amp; store</button>'
@@ -4684,7 +4684,7 @@ function ovClusterHomeClassic(){
       +'<button onclick="ovSetMod(\'dayend\')">Till &amp; reconciliation</button>'
       +'<button onclick="ovSetMod(\'deposit\')">Bank deposits</button>'
       +'<button onclick="ovSetMod(\'budget\')">Event budget</button>'
-      +'<button onclick="ovSetMod(\'cash\')">Cash report</button></div>'
+      +'<button onclick="ovSetMod(\'cash\')">Cash &amp; card report</button></div>'
     +'<div class="ovh-door"><h4>👥 People</h4>'
       +'<button onclick="ovSetMod(\'shift_wager\')">Daily wagers</button>'
       +'<button onclick="ovSetMod(\'shift_guard\')">Security guards</button>'
@@ -4797,9 +4797,9 @@ function ovCashReport(){
       trs+='<tr class="ov-sub" onclick="ovOpen(\''+s.code+'\')"><td class="stk">'+esc(s.name)+' <small style="color:#9aa">'+esc(s.region)+'</small></td>'+ovCashCells(f,false).map(c=>'<td class="'+(c.cls||"")+'">'+c.v+'</td>').join("")+'</tr>'; }); }
   }
   const tot='<tr class="ov-tot"><td class="stk">ALL 5 DAYS · '+stores.length+' stores</td>'+ovCashCells(T,true).map(c=>'<td class="'+(c.cls||"")+'">'+c.v+'</td>').join("")+'</tr>';
-  return '<div class="ov-cashbar"><div><b>Cash &amp; card recovery</b> · '+(OVREGFILTER||"all regions")+' · whole event</div><button class="btn btn-line btn-sm" onclick="ovCashCsv()">⬇ Download CSV</button></div>'
+  return '<div class="ov-cashbar"><div><b>Cash &amp; card report</b> · '+(OVREGFILTER||"all regions")+' · whole event</div><button class="btn btn-line btn-sm" onclick="ovCashCsv()">⬇ Download CSV</button></div>'
     +'<div class="ov-scroll"><table class="ov-tbl">'+th+trs+tot+'</table></div>'
-    +'<p class="meta" style="margin:8px 2px 0"><b>Status logic:</b> <span class="cell-ok">balanced</span> = every leg zero, nothing to do · <span class="cell-warn">offset</span> = cash gap and card difference cancel each other (method-of-payment mis-ring) — verify the bank settlement and correct the POS, no cash recovery from staff · <span class="cell-bad">RECOVER</span> = unexplained net shortage, exact amount shown · <span class="cell-warn">excess</span> = unexplained net surplus, verify and deposit. Deposits are NOT in this report — see the <b>Deposit</b> lens. Tap a day for the store breakdown.</p>';
+    +'<p class="meta" style="margin:8px 2px 0"><b>Status logic:</b> <span class="cell-ok">balanced</span> = every leg zero, nothing to do · <span class="cell-warn">offset</span> = cash gap and card difference cancel each other (method-of-payment mis-ring) — verify the bank settlement and correct the POS, no cash recovery from staff · <span class="cell-bad">RECOVER</span> = unexplained net shortage, exact amount shown · <span class="cell-warn">excess</span> = unexplained net surplus, verify and deposit. Deposits are NOT in this report — see the <b>Deposit variance</b> report (deposit gap + card offset + final impact live there). Tap a day for the store breakdown.</p>';
 }
 function csvCell(v){ v=String(v==null?"":v); if(/^[=+\-@\t\r]/.test(v)) v="'"+v; if(/[",\n]/.test(v)) v='"'+v.replace(/"/g,'""')+'"'; return v; }
 function downloadCsv(name,rows){ const csv=rows.map(r=>r.map(csvCell).join(",")).join("\r\n");
@@ -4894,8 +4894,10 @@ function ovSetDepDay(dy){ OVDEPDAY=dy; ovRender(); }
 function ovDepositReport(){
   const stores=ovDepStores(); if(!stores.length) return '<div class="card"><div class="card-body"><span class="meta">No deposits for this scope.</span></div></div>';
   const vaultNAof=(code,dy)=>!!(OVS.picks5[code]&&OVS.picks5[code][dy]&&OVS.picks5[code][dy].status==="vault");
-  const dayTot=(dy)=>{ let a={sys:0,dep:0,depVar:0,od:0,vc:0,fn:0,fv:0,bk:0,pd:0}; stores.forEach(s=>{ const f=OVS.deposit5[s.code][dy]; a.sys+=f.sys;a.dep+=f.dep;a.depVar+=f.depVar; if(f.status==="banked")a.bk++; else if(f.status==="pending")a.pd++; else a.od++; if(vaultNAof(s.code,dy))a.vc++; a.fn+=f.fakeN;a.fv+=f.fakeV; }); return a; };
-  const allTot=()=>{ let a={sys:0,dep:0,depVar:0,od:0,vc:0,fn:0,fv:0,bk:0,pd:0}; for(let dy=1;dy<=5;dy++){ const d=dayTot(dy); Object.keys(a).forEach(k=>a[k]+=d[k]); } return a; };
+  const cardNetOf=(code,dy)=>{ const cf=(OVS.cash[code]||{})[dy]; return cf?(cf.cardOver-cf.cardShort):0; };
+  const dayTot=(dy)=>{ let a={sys:0,dep:0,depVar:0,card:0,fin:0,od:0,vc:0,fn:0,fv:0,bk:0,pd:0}; stores.forEach(s=>{ const f=OVS.deposit5[s.code][dy]; const cn=cardNetOf(s.code,dy); a.sys+=f.sys;a.dep+=f.dep;a.depVar+=f.depVar; if(f.status==="banked"){a.card+=cn;a.fin+=f.depVar+cn;} if(f.status==="banked")a.bk++; else if(f.status==="pending")a.pd++; else a.od++; if(vaultNAof(s.code,dy))a.vc++; a.fn+=f.fakeN;a.fv+=f.fakeV; }); return a; };
+  const allTot=()=>{ let a={sys:0,dep:0,depVar:0,card:0,fin:0,od:0,vc:0,fn:0,fv:0,bk:0,pd:0}; for(let dy=1;dy<=5;dy++){ const d=dayTot(dy); Object.keys(a).forEach(k=>a[k]+=d[k]); } return a; };
+  const sgn=n=>n===0?"0":((n>0?"+":"−")+pkr(Math.abs(n)));
   const isAll=OVDEPDAY==="all";
   const T=isAll?allTot():dayTot(OVDEPDAY);
   const btns=[1,2,3,4,5].map(dy=>'<button class="ov-daybtn'+(OVDEPDAY===dy?" on":"")+'" onclick="ovSetDepDay('+dy+')">Day '+dy+'</button>').join("")
@@ -4905,47 +4907,51 @@ function ovDepositReport(){
   const dObj=((CONFIG.EVENTS.find(e=>e.id===OVS.event)||{days:[]}).days||[]).find(d=>String(d.day)===String(OVDEPDAY))||{};
   const hdrTitle=isAll?("Whole event · all 5 days · "+stores.length+" stores"):("Day "+OVDEPDAY+(dObj.date?" · "+esc(dObj.date):"")+" · "+stores.length+" stores");
   const header='<div class="ov-dephdr"><div class="ov-dephdr-t">'+hdrTitle+'</div><div class="ov-tiles">'
-    +tile("Cash in system",pkr(T.sys))+tile("Deposited in bank",pkr(T.dep))+tile("Variance",T.depVar?pkr(T.depVar):"matches",T.depVar!==0)
+    +tile("Cash in system",pkr(T.sys))+tile("Deposited in bank",pkr(T.dep))+tile("Variance",T.depVar?sgn(T.depVar):"matches",T.depVar!==0)
+    +tile("Card offset",sgn(T.card))+tile("Final impact",sgn(T.fin),T.fin<0)
     +tile("Fake notes at bank",T.fn?T.fn+" · "+pkr(T.fv):"none",T.fn>0)+tile("Overdue deposits",T.od,T.od>0)+tile("Vault not available",T.vc,T.vc>0)
     +'</div></div>';
   let body;
   if(isAll){
-    const th='<tr><th class="stk">Sale day</th><th>Cash in system</th><th>Deposited</th><th>Variance</th><th>Fake notes</th><th>Overdue</th><th>Vault n/a</th></tr>';
+    const th='<tr><th class="stk">Sale day</th><th>Cash in system</th><th>Deposited</th><th>Variance</th><th>Card offset</th><th>Final impact</th><th>Fake notes</th><th>Overdue</th><th>Vault n/a</th></tr>';
     let trs=""; for(let dy=1;dy<=5;dy++){ const a=dayTot(dy);
       trs+='<tr onclick="ovSetDepDay('+dy+')"><td class="stk">Day '+dy+' ›</td><td>'+pkr(a.sys)+'</td><td>'+pkr(a.dep)+'</td>'
-        +'<td class="'+(a.depVar?"cell-bad":"muted")+'">'+(a.depVar?pkr(a.depVar):"matches")+'</td>'
+        +'<td class="'+(a.depVar?"cell-bad":"muted")+'">'+(a.depVar?sgn(a.depVar):"matches")+'</td>'
+        +'<td class="'+(a.card?"cell-warn":"muted")+'">'+sgn(a.card)+'</td>'
+        +'<td class="'+(a.fin<0?"cell-bad":a.fin>0?"cell-warn":"muted")+'"><b>'+(a.fin===0?"0 ✓":sgn(a.fin))+'</b></td>'
         +'<td class="'+(a.fn?"cell-bad":"muted")+'">'+(a.fn?a.fn+" · "+pkr(a.fv):"none")+'</td>'
         +'<td class="'+(a.od?"cell-bad":"muted")+'">'+a.od+'</td><td class="'+(a.vc?"cell-bad":"muted")+'">'+a.vc+'</td></tr>'; }
     const tt=allTot();
-    const tot='<tr class="ov-tot"><td class="stk">ALL 5 DAYS</td><td>'+pkr(tt.sys)+'</td><td>'+pkr(tt.dep)+'</td><td class="'+(tt.depVar?"cell-bad":"")+'">'+(tt.depVar?pkr(tt.depVar):"matches")+'</td><td class="'+(tt.fn?"cell-bad":"")+'">'+(tt.fn?tt.fn+" · "+pkr(tt.fv):"none")+'</td><td class="'+(tt.od?"cell-bad":"")+'">'+tt.od+'</td><td class="'+(tt.vc?"cell-bad":"")+'">'+tt.vc+'</td></tr>';
+    const tot='<tr class="ov-tot"><td class="stk">ALL 5 DAYS</td><td>'+pkr(tt.sys)+'</td><td>'+pkr(tt.dep)+'</td><td class="'+(tt.depVar?"cell-bad":"")+'">'+(tt.depVar?sgn(tt.depVar):"matches")+'</td><td class="'+(tt.card?"cell-warn":"")+'">'+sgn(tt.card)+'</td><td class="'+(tt.fin<0?"cell-bad":tt.fin>0?"cell-warn":"")+'"><b>'+(tt.fin===0?"0 ✓":sgn(tt.fin))+'</b></td><td class="'+(tt.fn?"cell-bad":"")+'">'+(tt.fn?tt.fn+" · "+pkr(tt.fv):"none")+'</td><td class="'+(tt.od?"cell-bad":"")+'">'+tt.od+'</td><td class="'+(tt.vc?"cell-bad":"")+'">'+tt.vc+'</td></tr>';
     body='<p class="meta" style="margin:0 0 6px">Every sale day totalled. Tap a day to open its store detail.</p><div class="ov-scroll"><table class="ov-tbl">'+th+trs+tot+'</table></div>';
   } else {
     let list=stores.map(s=>{ const f=OVS.deposit5[s.code][OVDEPDAY]; const vaultNA=vaultNAof(s.code,OVDEPDAY);
-      /* MOP mis-ring: cash banked short/over ≈ card settled over/short the same day */
-      const cf=(OVS.cash[s.code]||{})[OVDEPDAY]; const cardNet=cf?(cf.cardOver-cf.cardShort):0;
-      const mopTol=Math.max(500,Math.round(0.01*Math.max(Math.abs(f.depVar),Math.abs(cardNet))));
-      const mop=(f.status==="banked"&&f.depVar!==0&&cardNet!==0&&f.depVar*cardNet<0&&Math.abs(f.depVar+cardNet)<=mopTol);
-      return {s,f,vaultNA,mop,cardNet,prio:(vaultNA||f.status==="overdue")}; });
+      const cardNet=cardNetOf(s.code,OVDEPDAY);
+      const fin=(f.status==="banked")?(f.depVar+cardNet):null;
+      return {s,f,vaultNA,cardNet,fin,prio:(vaultNA||f.status==="overdue")}; });
     list.sort((a,b)=>(b.prio-a.prio));
-    const th='<tr><th class="stk">Store</th><th>Cash in system</th><th>Deposited in bank</th><th>Bank · slip #</th><th>Variance</th><th>Vault available</th><th>Fake notes (banking)</th><th>Status</th></tr>';
+    const th='<tr><th class="stk">Store</th><th>Cash in system</th><th>Deposited in bank</th><th>Bank · slip #</th><th>Variance</th><th>Card offset</th><th>Final impact</th><th>Fake notes (banking)</th><th>Vault available</th><th>Status</th></tr>';
     const rows=list.map(function(o){ const s=o.s,f=o.f,vaultNA=o.vaultNA,prio=o.prio,banked=f.status==="banked";
       return '<tr class="'+(prio?"ov-prio":"")+'" onclick="ovOpen(\''+s.code+'\')"><td class="stk">'+(prio?'<span class="ov-priotag">priority</span> ':'')+esc(s.name)+' <small style="color:#9aa">'+esc(s.region)+'</small></td>'
         +'<td>'+pkr(f.sys)+'</td><td class="'+(banked?"":"muted")+'">'+(banked?pkr(f.dep):"—")+'</td>'
         +'<td class="'+(banked?"":"muted")+'">'+(banked?esc(f.bank||"—")+' · '+esc(f.slip||"—"):"—")+'</td>'
-        +'<td class="'+(banked&&(f.depVar!==0||f.mism)?"cell-bad":"muted")+'">'+(banked?((f.depVar?((f.depVar>0?"+":"−")+pkr(Math.abs(f.depVar))):"matches")+(f.mism?' <span class="ov-echip">⚑ store claimed '+(f.claim?pkr(f.claim):"matches")+' — verify slip</span>':'')+(f.sysMism?' <span class="ov-echip">⚑ store typed a different system figure on deposit — verify</span>':'')+(o.mop?' <span class="ov-mchip">⇄ offsets card '+((o.cardNet>0?"+":"−")+pkr(Math.abs(o.cardNet)))+' — MOP mis-ring, verify settlement, no cash recovery</span>':'')):"—")+'</td>'
-        +'<td class="'+(vaultNA?"cell-bad":"muted")+'">'+(vaultNA?"No — cash held":"Yes")+'</td>'
+        +'<td class="'+(banked&&(f.depVar!==0||f.mism)?"cell-bad":"muted")+'">'+(banked?((f.depVar?sgn(f.depVar):"matches")+(f.mism?' <span class="ov-echip">⚑ claimed '+(f.claim?sgn(f.claim):'"matches"')+'</span>':'')):"—")+'</td>'
+        +'<td class="'+(o.cardNet?"cell-warn":"muted")+'">'+(banked?sgn(o.cardNet):sgn(o.cardNet))+'</td>'
+        +'<td class="'+(o.fin===null?"muted":o.fin<0?"cell-bad":o.fin>0?"cell-warn":"cell-ok")+'"><b>'+(o.fin===null?"—":(o.fin===0?"0 ✓":sgn(o.fin)))+'</b></td>'
         +'<td class="'+(f.fakeN?"cell-bad":"muted")+'">'+(f.fakeN?f.fakeN+" · "+pkr(f.fakeV):"none")+'</td>'
+        +'<td class="'+(vaultNA?"cell-bad":"muted")+'">'+(vaultNA?"No — cash held":"Yes")+'</td>'
         +'<td>'+ovDepStatusChip(f.status)+'</td></tr>'; }).join("");
     body='<p class="meta" style="margin:0 0 6px">'+T.bk+' banked · '+T.pd+' pending · '+T.od+' overdue · '+T.vc+' vault-not-available. Priority rows first.</p><div class="ov-scroll"><table class="ov-tbl">'+th+rows+'</table></div>';
   }
-  return '<div class="ov-cashbar"><div><b>Bank deposits</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><button class="btn btn-line btn-sm" onclick="ovDepositCsv()">⬇ Download CSV</button></div>'
+  return '<div class="ov-cashbar"><div><b>Deposit variance report</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><button class="btn btn-line btn-sm" onclick="ovDepositCsv()">⬇ Download CSV</button></div>'
     +daySel+header+body
-    +'<p class="meta" style="margin:8px 2px 0"><b>Vault available = No</b> = cash could not be secured, held unsecured (critical, shown first). <b>Status</b>: Banked / Pending (next morning) / Overdue (past day not banked). <b>Fake notes (banking)</b> = counterfeits caught at the bank. <b>⇄ offsets card</b> = the cash gap is matched by an opposite card difference the same day (sale rung on the wrong method of payment) — verify the card settlement report and correct the POS; the money is not missing.</p>';
+    +'<p class="meta" style="margin:8px 2px 0"><b>How to read:</b> Variance = deposited − cash in system (always computed, never the store\'s typed claim). Card offset = card settled vs system the same day. <b>Final impact = variance + card offset</b> — <span class="cell-ok">0 ✓</span> or a few rupees means the cash gap sits in card settlement (wrong method of payment at the till): verify the card settlement, no cash recovery. A real negative final impact is money to chase; a positive one is surplus to verify. <span class="ov-echip">⚑ claimed</span> = store typed a different variance — verify the slip. <b>Vault = No</b> = cash held unsecured (priority, shown first). <b>Status</b>: Banked / Pending (next morning) / Overdue. Do not add this report to the Cash &amp; card report — card appears in both; each report is complete on its own.</p>';
 }
-function ovDepositCsv(){ const rows=[["Store","Region","Day","Cash in system","Deposited in bank","Bank","Slip #","Variance","Vault available","Fake notes count","Fake notes PKR","Banked by","Status"]];
+function ovDepositCsv(){ const rows=[["Store","Region","Day","Cash in system","Deposited in bank","Bank","Slip #","Variance (computed)","Card offset","Final impact","Store claimed","Vault available","Fake notes count","Fake notes PKR","Banked by","Status"]];
   ovDepStores().forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=OVS.deposit5[s.code][dy]; const vaultNA=!!(OVS.picks5[s.code]&&OVS.picks5[s.code][dy]&&OVS.picks5[s.code][dy].status==="vault");
-    rows.push([s.name,s.region,"Day "+dy,f.sys,f.dep,f.bank||"",f.slip||"",f.depVar,vaultNA?"No":"Yes",f.fakeN,f.fakeV,f.bankedBy,f.status]); } });
-  downloadCsv("deposit-report.csv",rows); }
+    const cf=(OVS.cash[s.code]||{})[dy]; const cn=cf?(cf.cardOver-cf.cardShort):0; const fin=(f.status==="banked")?(f.depVar+cn):"";
+    rows.push([s.name,s.region,"Day "+dy,f.sys,f.dep,f.bank||"",f.slip||"",f.depVar,cn,fin,f.claim,vaultNA?"No":"Yes",f.fakeN,f.fakeV,f.bankedBy,f.status]); } });
+  downloadCsv("deposit-variance-report.csv",rows); }
 
 
 /* ---- Head-office daily-wagers / security-guards report (attendance · punctuality · shift · gender) ---- */
