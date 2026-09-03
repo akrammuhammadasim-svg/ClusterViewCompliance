@@ -166,6 +166,7 @@ input.locked{background:#F4F6F9;color:var(--ink-soft);text-align:center;font-fam
 .ov-msum{font-size:12.5px;color:#556;margin-top:3px}
 .ov-exc{margin-top:6px;display:flex;flex-wrap:wrap;gap:5px}
 .ov-echip{font-size:11px;background:#FEE2E2;color:#b91c1c;padding:2px 8px;border-radius:8px}
+.ov-mchip{font-size:11px;background:#FFFBEB;color:#b45309;padding:2px 8px;border-radius:8px}
 .ov-mrow.has-exc{background:#FFFCFB}
 .ov-detail{margin-top:8px;padding:8px 10px;background:#F7F9FC;border-radius:8px;font-size:12px;color:#445}
 .ov-l{padding:2px 0}.ov-lines .ov-line{display:flex;justify-content:space-between;gap:12px;padding:2px 0;border-bottom:1px solid rgba(0,0,0,.05)}.ov-lines .ov-line:last-child{border-bottom:0}
@@ -204,6 +205,8 @@ input.locked{background:#F4F6F9;color:var(--ink-soft);text-align:center;font-fam
 .ov-tbl tbody tr{cursor:pointer}.ov-tbl tr:hover td{background:#F5F8FF}
 .ov-tbl td.cell-bad{color:#b91c1c;font-weight:700;background:#FEF2F2}
 .ov-tbl td.cell-warn{color:#b45309;font-weight:700;background:#FFFBEB}
+.ov-tbl td.cell-ok{color:#15803d;font-weight:700;background:#F0FDF4}
+span.cell-ok{color:#15803d;font-weight:700} span.cell-warn{color:#b45309;font-weight:700} span.cell-bad{color:#b91c1c;font-weight:700}
 .ov-tbl td.muted{color:#9aa3af}
 .ov-tbl tr.ov-tot td{background:#EEF2F7;font-weight:800;color:var(--ink,#123);border-top:2px solid #cbd5e1}
 .inc-prio{font-size:10.5px;font-weight:700;background:#FEF2F2;color:#B3261E;padding:2px 8px;border-radius:6px}
@@ -3270,12 +3273,12 @@ function ovBuild(){
 
   /* 5-day structures (zero-filled where nothing filed) */
   OVS.cash={}; OVS.picks5={}; OVS.deposit5={}; OVS.wager5={}; OVS.guard5={}; OVS.rating5={}; OVS.budget5={}; OVS.budCats={};
-  OVS.tillLines=[]; OVS.filed5={}; OVS.net5={}; OVS.prep5={}; OVS.postAll={}; OVS.support5={};
+  OVS.tillLines=[]; OVS.filed5={}; OVS.net5={}; OVS.netSplit5={}; OVS.prep5={}; OVS.postAll={}; OVS.support5={};
   const today=bd;
   OVS.stores.forEach(st=>{
     OVS.cash[st.code]={}; OVS.picks5[st.code]={}; OVS.deposit5[st.code]={};
     OVS.wager5[st.code]={}; OVS.guard5[st.code]={}; OVS.rating5[st.code]={}; OVS.budget5[st.code]={};
-    OVS.filed5[st.code]={}; OVS.net5[st.code]={}; OVS.prep5[st.code]={}; OVS.support5[st.code]={};
+    OVS.filed5[st.code]={}; OVS.net5[st.code]={}; OVS.netSplit5[st.code]={}; OVS.prep5[st.code]={}; OVS.support5[st.code]={};
     let cum=0, alloc=0;
     for(let dy=1;dy<=5;dy++){
       const rows=rowsOf(st.code,dy);
@@ -3286,6 +3289,8 @@ function ovBuild(){
       ["shift_wager","shift_guard","dayend","deposit","budget","performance","support"].forEach(k=>{ if(rows[k]) filedK.push(k); });
       OVS.filed5[st.code][dy]=filedK;
       OVS.net5[st.code][dy]=de?aggTill(de).net:0;
+      { const at=de?aggTill(de):null;
+        OVS.netSplit5[st.code][dy]=at?{cash:(at.over-at.short),card:(at.cardOver-at.cardShort)}:{cash:0,card:0}; }
       OVS.prep5[st.code][dy]=rows.prep?rows.prep.data:null;
       if(dy===1){ const pr2=rowsOf(st.code,'P'); OVS.postAll[st.code]=pr2.post?pr2.post.data:null; }
       const sys=de?ovN(de.cashInSystem):(dp?ovN(dp.cashInSystem):0);
@@ -3294,11 +3299,17 @@ function ovBuild(){
          separately and flagged when it disagrees (stores sometimes type "matches"
          against numbers that do not). */
       const claim=dp?ovN(dp.variance):0;
-      const dvar=dp?(dep-ovN(dp.cashInSystem)):0;
+      /* variance vs the SAME system figure the row shows (day-end when filed) —
+         a store re-typing a lower "system" on the deposit screen cannot hide a gap */
+      const dvar=dp?(dep-sys):0;
       const dmis=dp?Math.abs(dvar-claim)>1:false;
+      const sysMism=(de&&dp)?Math.abs(ovN(de.cashInSystem)-ovN(dp.cashInSystem))>1:false;
       const fakes=(de&&de.fakeNotes)||[];
-      OVS.cash[st.code][dy]={sys:sys,dep:dep,depVar:dvar,short:de?ovN(de.declaredShortage):0,
-        over:de?ovN(de.declaredExcess):0,fakeN:fakes.length,fakeV:fakes.reduce((a,x)=>a+ovN(x.denomination)*ovN(x.quantity),0)};
+      { const at2=de?aggTill(de):null;
+      OVS.cash[st.code][dy]={sys:sys,dep:dep,depVar:dvar,sysMism:sysMism,filed:!!de,
+        short:de?ovN(de.declaredShortage):0,over:de?ovN(de.declaredExcess):0,
+        cardShort:at2?at2.cardShort:0,cardOver:at2?at2.cardOver:0,net:at2?at2.net:0,
+        fakeN:fakes.length,fakeV:fakes.reduce((a,x)=>a+ovN(x.denomination)*ovN(x.quantity),0)}; }
       /* pick-ups */
       const pks=(rows.picks||[]).map(x=>x.data||{});
       const p1=pks.find(x=>String(x.seq)==="1"), p2=pks.find(x=>String(x.seq)==="2");
@@ -3311,7 +3322,7 @@ function ovBuild(){
       /* deposit status: banked if filed; overdue if the day passed unbanked; else pending */
       const bank=dp||null;
       OVS.deposit5[st.code][dy]={ sys:sys, dep:bank?dep:0, depVar:bank?dvar:0,
-        claim:bank?claim:0, mism:bank?dmis:false,
+        claim:bank?claim:0, mism:bank?dmis:false, sysMism:bank?sysMism:false,
         held:1, bankedBy:bank?((bank.people||[]).map(x=>x.name).join(", ")||""):"",
         bank:bank?(bank.bankName||""):"", slip:bank?(bank.slipNo||""):"",
         fakeN:bank?((bank.fakeNotes||[]).length):0,
@@ -4423,6 +4434,13 @@ function ovPctBadge(pct){ const c=sevC(pct);
   return '<span style="background:'+c.bg+';color:'+c.fg+';padding:2px 10px;border-radius:8px;font-weight:800">'+pct+'%</span>'; }
 function ovNetFmt(n){ return n===0?'<span style="color:#6b7280">0</span>'
   :'<span style="color:'+(n<0?'#B3261E':'#1B6B4A')+';font-weight:700">'+(n>0?'+':'−')+pkr(Math.abs(n))+'</span>'; }
+/* NET IMPACT clarity: the combined figure never stands alone — it always shows
+   how it was formed, so a card excess can never hide a cash shortage. */
+function ovSplitOf(codes,dy){ let c=0,k=0; codes.forEach(code=>{ const sp=(OVS.netSplit5[code]||{})[dy]; if(sp){c+=sp.cash;k+=sp.card;} }); return {cash:c,card:k}; }
+function ovSignedNum(n){ return n===0?"0":(n>0?"+":"−")+fmt(Math.abs(n)); }
+function ovNetFmtSplit(n,sp){ const base=ovNetFmt(n);
+  if(!sp||(sp.cash===0&&sp.card===0)) return base;
+  return base+'<br><small style="color:'+(sp.cash<0?'#B3261E':'#6b7280')+';font-weight:600">cash '+ovSignedNum(sp.cash)+'</small> <small style="color:#6b7280;font-weight:600">· card '+ovSignedNum(sp.card)+'</small>'; }
 function ovDayIncidents(dy){ const ev=CONFIG.EVENTS[0]||{days:[]}; const d=(ev.days||[]).find(x=>String(x.day)===String(dy));
   const codes=ovTableStores().map(s=>s.code);
   return (OVS.incidents||[]).filter(i=>codes.indexOf(i.code)>-1 && (!d||!d.date||!i.date||i.date===d.date)); }
@@ -4439,7 +4457,8 @@ function ovNationalStrip(){
     +'<div class="ov-stat'+sevCls(avg)+'"><b>'+avg+'%</b><span>avg compliance</span></div>'
     +'<div class="ov-stat"><b>'+full+'/'+stores.length+'</b><span>fully filed</span></div>'
     +'<div class="ov-stat'+(signed===stores.length&&stores.length?" good":"")+'"><b>'+signed+'/'+stores.length+'</b><span>signed off</span></div>'
-    +'<div class="ov-stat'+(net<0?" bad":net>0?" good":"")+'"><b>'+(net===0?"0":(net>0?"+":"−")+fmt(Math.abs(net)))+'</b><span>net impact PKR</span></div>'
+    +(function(){ const sp=ovSplitOf(stores.map(s=>s.code),dy);
+       return '<div class="ov-stat'+(net<0?" bad":net>0?" good":"")+'"><b>'+(net===0?"0":(net>0?"+":"−")+fmt(Math.abs(net)))+'</b><span>net impact PKR'+((sp.cash||sp.card)?' · cash '+ovSignedNum(sp.cash)+' · card '+ovSignedNum(sp.card):'')+'</span></div>'; })()
     +'<div class="ov-stat'+(hot?" bad":inc.length?" warn":"")+'"><b>'+inc.length+'</b><span>incidents'+(hot?" · "+hot+" hot":"")+'</span></div>'
     +'<div class="ov-stat'+(banked<stores.length&&ovDepositDue(dy)?" warn":"")+'"><b>'+banked+'/'+stores.length+'</b><span>deposits banked</span></div>'
     +'</div>';
@@ -4490,10 +4509,10 @@ function ovClusterScore(){
     return '<tr style="cursor:pointer" onclick="ovClToggle(\''+esc(r.mgr)+'\')">'
       +'<td class="stk" style="font-weight:600">'+esc(r.mgr)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td>'
       +'<td>'+r.list.length+'</td><td>'+ovPctBadge(r.avg)+'</td><td>'+bar(r.signed,r.list.length)+'</td>'
-      +'<td>'+ovNetFmt(r.net)+'</td><td class="'+(r.apr?'cell-bad':'')+'">'+(r.inc||"·")+(r.apr?' <b>'+r.apr+'⏳</b>':'')+'</td></tr>'+sub;
+      +'<td>'+ovNetFmtSplit(r.net,ovSplitOf(r.list.map(s=>s.code),dy))+'</td><td class="'+(r.apr?'cell-bad':'')+'">'+(r.inc||"·")+(r.apr?' <b>'+r.apr+'⏳</b>':'')+'</td></tr>'+sub;
   }).join("");
   const nat='<tr class="ov-tot"><td class="stk">'+(OVROLE==="hq"?"NATIONAL":OVROLE==="regional"?"YOUR REGION":"YOUR CLUSTER")+' · '+tot.n+' stores</td><td></td>'
-    +'<td>'+ovPctBadge(tot.n?Math.round(tot.pctSum/tot.n):0)+'</td><td>'+bar(tot.signed,tot.n)+'</td><td>'+ovNetFmt(tot.net)+'</td><td></td></tr>';
+    +'<td>'+ovPctBadge(tot.n?Math.round(tot.pctSum/tot.n):0)+'</td><td>'+bar(tot.signed,tot.n)+'</td><td>'+ovNetFmtSplit(tot.net,ovSplitOf(stores.map(s=>s.code),dy))+'</td><td></td></tr>';
   return '<div class="ov-scroll"><table class="ov-tbl">'
     +'<tr><th class="stk">Cluster manager</th><th>Stores</th><th>Compliance</th><th>Sign-off ratio</th><th>Net impact</th><th>Incidents · approvals</th></tr>'
     +trs+nat+'</table></div><p class="meta" style="margin:6px 2px 0">Tap a manager row to see their stores; tap a store chip to open it.</p>';
@@ -4549,7 +4568,7 @@ function ovStoreRank(){
     +'<td>'+r.c.filed+'/'+r.c.req+(r.c.depFiled&&!ovDepositDue(dy)?' +dep':'')+'</td>'
     +'<td>'+ovPctBadge(r.c.pct)+'</td>'
     +'<td class="'+(r.ex?'cell-bad':'')+'">'+(r.ex||'·')+'</td>'
-    +'<td>'+ovNetFmt(r.net)+'</td>'
+    +'<td>'+ovNetFmtSplit(r.net,ovSplitOf([r.s.code],dy))+'</td>'
     +'<td>'+(r.sg?'<span style="color:#1B6B4A;font-weight:700">✓ '+esc(r.sg.by)+'</span>':'<span style="color:#8A5A00">pending</span>')+'</td></tr>').join("");
   return '<div class="ov-scroll"><table class="ov-tbl">'
     +'<tr><th class="stk">Store</th><th>Cluster manager</th><th>Filed</th><th>Compliance</th><th>Exceptions</th><th>Net impact</th><th>Sign-off</th></tr>'
@@ -4739,40 +4758,59 @@ function ovLens(){
 
 /* ---- Head-office cash & variance report (day-wise; deposit var, till var, fake notes kept SEPARATE) ---- */
 function ovCashStores(){ return ovTableStores().filter(s=>OVS.cash[s.code]); }
-function ovCashDayFig(dy){ let a={sys:0,dep:0,depVar:0,short:0,over:0,fakeN:0,fakeV:0}; ovCashStores().forEach(s=>{ const f=OVS.cash[s.code][dy]; a.sys+=f.sys;a.dep+=f.dep;a.depVar+=f.depVar;a.short+=f.short;a.over+=f.over;a.fakeN+=f.fakeN;a.fakeV+=f.fakeV; }); return a; }
-function ovCashCells(f){ return [ {v:pkr(f.sys)}, {v:pkr(f.dep)},
-   {v:f.depVar?pkr(f.depVar):"matches",cls:f.depVar?"cell-bad":"muted"},
-   {v:f.short?pkr(f.short):"0",cls:f.short>0?"cell-bad":""},
-   {v:f.over?pkr(f.over):"0",cls:f.over>0?"cell-warn":""},
+function ovCashDayFig(dy){ let a={short:0,over:0,cardShort:0,cardOver:0,net:0,fakeN:0,fakeV:0,nBal:0,nOff:0,nRec:0,nExc:0}; ovCashStores().forEach(s=>{ const f=OVS.cash[s.code][dy]; a.short+=f.short;a.over+=f.over;a.cardShort+=f.cardShort;a.cardOver+=f.cardOver;a.net+=f.net;a.fakeN+=f.fakeN;a.fakeV+=f.fakeV;
+  const st2=ovCashStatus(f); if(st2.k==="bal")a.nBal++; else if(st2.k==="off")a.nOff++; else if(st2.k==="rec")a.nRec++; else if(st2.k==="exc")a.nExc++; }); return a; }
+/* 3-status recovery logic: balanced / offsetting MOP mis-ring / genuine recovery */
+function ovCashStatus(f){
+  if(!f.filed) return {k:"nf",label:"not filed",cls:"muted"};
+  const cashNet=f.over-f.short, cardNet=f.cardOver-f.cardShort;
+  if(cashNet===0&&cardNet===0) return {k:"bal",label:"balanced — no recovery",cls:"cell-ok"};
+  const tol=Math.max(500,Math.round(0.01*Math.max(Math.abs(cashNet),Math.abs(cardNet))));
+  if(cashNet*cardNet<0&&Math.abs(cashNet+cardNet)<=tol)
+    return {k:"off",label:"offset — verify card settlement · no cash recovery",cls:"cell-warn"};
+  if(f.net<0) return {k:"rec",label:"RECOVER "+pkr(-f.net),cls:"cell-bad"};
+  return {k:"exc",label:"excess "+pkr(f.net)+" — verify",cls:"cell-warn"};
+}
+function ovCashCells(f,isDay){
+  const st2=isDay?null:ovCashStatus(f);
+  const stCell=isDay
+    ? {v:(f.nRec?f.nRec+" recovery":"")+(f.nRec&&(f.nOff||f.nExc)?" · ":"")+(f.nOff?f.nOff+" offset":"")+((f.nOff&&f.nExc)?" · ":"")+(f.nExc?f.nExc+" excess":"")+((f.nRec||f.nOff||f.nExc)?" · ":"")+f.nBal+" balanced",cls:f.nRec?"cell-bad":(f.nOff||f.nExc)?"cell-warn":"muted"}
+    : {v:st2.label,cls:st2.cls};
+  return [ {v:f.short?pkr(f.short):"0",cls:f.short>0?"cell-bad":"muted"},
+   {v:f.over?pkr(f.over):"0",cls:f.over>0?"cell-warn":"muted"},
+   {v:f.cardShort?pkr(f.cardShort):"0",cls:f.cardShort>0?"cell-bad":"muted"},
+   {v:f.cardOver?pkr(f.cardOver):"0",cls:f.cardOver>0?"cell-warn":"muted"},
+   {v:ovNetFmt(f.net)},
+   stCell,
    {v:f.fakeN?(f.fakeN+" note"+(f.fakeN>1?"s":"")+" · "+pkr(f.fakeV)):"none",cls:f.fakeN?"cell-bad":"muted"} ]; }
 function ovSetCashDay(dy){ OVCASHDAY = (OVCASHDAY===dy)?null:dy; ovRender(); }
 function ovCashReport(){
   const stores=ovCashStores();
   if(!stores.length) return '<div class="card"><div class="card-body"><span class="meta">No cash filed for this scope yet.</span></div></div>';
-  const cols=["Cash in system","Deposited","Deposit var.","Till shortage","Till excess","Fake notes"];
+  const cols=["Cash short","Cash excess","Card short","Card excess","Net impact","Status","Fake notes"];
   const th='<tr><th class="stk">Sale day</th>'+cols.map(c=>'<th>'+c+'</th>').join("")+'</tr>';
-  let trs=""; const T={sys:0,dep:0,depVar:0,short:0,over:0,fakeN:0,fakeV:0};
-  for(let dy=1;dy<=5;dy++){ const a=ovCashDayFig(dy); ["sys","dep","depVar","short","over","fakeN","fakeV"].forEach(k=>T[k]+=a[k]);
+  let trs=""; const T={short:0,over:0,cardShort:0,cardOver:0,net:0,fakeN:0,fakeV:0,nBal:0,nOff:0,nRec:0,nExc:0};
+  for(let dy=1;dy<=5;dy++){ const a=ovCashDayFig(dy); ["short","over","cardShort","cardOver","net","fakeN","fakeV","nBal","nOff","nRec","nExc"].forEach(k=>T[k]+=a[k]);
     const open=OVCASHDAY===dy;
-    trs+='<tr class="ov-dayrow" onclick="ovSetCashDay('+dy+')"><td class="stk">Day '+dy+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td>'+ovCashCells(a).map(c=>'<td class="'+(c.cls||"")+'">'+c.v+'</td>').join("")+'</tr>';
+    trs+='<tr class="ov-dayrow" onclick="ovSetCashDay('+dy+')"><td class="stk">Day '+dy+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td>'+ovCashCells(a,true).map(c=>'<td class="'+(c.cls||"")+'">'+c.v+'</td>').join("")+'</tr>';
     if(open){ stores.forEach(s=>{ const f=OVS.cash[s.code][dy];
-      trs+='<tr class="ov-sub" onclick="ovOpen(\''+s.code+'\')"><td class="stk">'+esc(s.name)+' <small style="color:#9aa">'+esc(s.region)+'</small></td>'+ovCashCells(f).map(c=>'<td class="'+(c.cls||"")+'">'+c.v+'</td>').join("")+'</tr>'; }); }
+      trs+='<tr class="ov-sub" onclick="ovOpen(\''+s.code+'\')"><td class="stk">'+esc(s.name)+' <small style="color:#9aa">'+esc(s.region)+'</small></td>'+ovCashCells(f,false).map(c=>'<td class="'+(c.cls||"")+'">'+c.v+'</td>').join("")+'</tr>'; }); }
   }
-  const tot='<tr class="ov-tot"><td class="stk">ALL 5 DAYS · '+stores.length+' stores</td>'+ovCashCells(T).map(c=>'<td class="'+(c.cls||"")+'">'+c.v+'</td>').join("")+'</tr>';
-  return '<div class="ov-cashbar"><div><b>Cash &amp; variance</b> · '+(OVREGFILTER||"all regions")+' · whole event</div><button class="btn btn-line btn-sm" onclick="ovCashCsv()">⬇ Download CSV</button></div>'
+  const tot='<tr class="ov-tot"><td class="stk">ALL 5 DAYS · '+stores.length+' stores</td>'+ovCashCells(T,true).map(c=>'<td class="'+(c.cls||"")+'">'+c.v+'</td>').join("")+'</tr>';
+  return '<div class="ov-cashbar"><div><b>Cash &amp; card recovery</b> · '+(OVREGFILTER||"all regions")+' · whole event</div><button class="btn btn-line btn-sm" onclick="ovCashCsv()">⬇ Download CSV</button></div>'
     +'<div class="ov-scroll"><table class="ov-tbl">'+th+trs+tot+'</table></div>'
-    +'<p class="meta" style="margin:8px 2px 0">Deposit variance, till shortage/excess and fake notes are shown <b>separately</b> — they are checks at different stages (count vs. bank) and are deliberately not merged into one figure. Tap a day for the store breakdown; tap a store to open its full day (fake notes are tagged to the cashier there).</p>';
+    +'<p class="meta" style="margin:8px 2px 0"><b>Status logic:</b> <span class="cell-ok">balanced</span> = every leg zero, nothing to do · <span class="cell-warn">offset</span> = cash gap and card difference cancel each other (method-of-payment mis-ring) — verify the bank settlement and correct the POS, no cash recovery from staff · <span class="cell-bad">RECOVER</span> = unexplained net shortage, exact amount shown · <span class="cell-warn">excess</span> = unexplained net surplus, verify and deposit. Deposits are NOT in this report — see the <b>Deposit</b> lens. Tap a day for the store breakdown.</p>';
 }
 function csvCell(v){ v=String(v==null?"":v); if(/^[=+\-@\t\r]/.test(v)) v="'"+v; if(/[",\n]/.test(v)) v='"'+v.replace(/"/g,'""')+'"'; return v; }
 function downloadCsv(name,rows){ const csv=rows.map(r=>r.map(csvCell).join(",")).join("\r\n");
   try{ const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{a.remove(); URL.revokeObjectURL(url);},120); toast("CSV downloaded."); }
   catch(e){ toast("Download blocked in this view — open the file in a browser."); } }
-function ovCashCsv(){ const rows=[["Store","Region","Day","Cash in system","Deposited","Deposit variance","Till shortage","Till excess","Fake notes count","Fake notes PKR"]];
-  ovCashStores().forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=OVS.cash[s.code][dy]; rows.push([s.name,s.region,"Day "+dy,f.sys,f.dep,f.depVar,f.short,f.over,f.fakeN,f.fakeV]); } });
+function ovCashCsv(){ const rows=[["Store","Region","Day","Cash short","Cash excess","Card short","Card excess","Net impact","Status","Fake notes count","Fake notes PKR"]];
+  ovCashStores().forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=OVS.cash[s.code][dy]; rows.push([s.name,s.region,"Day "+dy,f.short,f.over,f.cardShort,f.cardOver,f.net,ovCashStatus(f).label,f.fakeN,f.fakeV]); } });
   // event totals row
-  const T={sys:0,dep:0,depVar:0,short:0,over:0,fakeN:0,fakeV:0}; ovCashStores().forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=OVS.cash[s.code][dy]; ["sys","dep","depVar","short","over","fakeN","fakeV"].forEach(k=>T[k]+=f[k]); } });
-  rows.push(["TOTAL","","",T.sys,T.dep,T.depVar,T.short,T.over,T.fakeN,T.fakeV]);
-  downloadCsv("cash-variance-report.csv",rows); }
+  const T={short:0,over:0,cardShort:0,cardOver:0,net:0,fakeN:0,fakeV:0}; ovCashStores().forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=OVS.cash[s.code][dy]; ["short","over","cardShort","cardOver","net","fakeN","fakeV"].forEach(k=>T[k]+=f[k]); } });
+  rows.push(["TOTAL","","",T.short,T.over,T.cardShort,T.cardOver,T.net,"",T.fakeN,T.fakeV]);
+  downloadCsv("cash-recovery-report.csv",rows); }
 
 
 /* ---- Head-office pick-up compliance report (completion + overnight risk + timing + dual control) ---- */
@@ -4882,14 +4920,19 @@ function ovDepositReport(){
     const tot='<tr class="ov-tot"><td class="stk">ALL 5 DAYS</td><td>'+pkr(tt.sys)+'</td><td>'+pkr(tt.dep)+'</td><td class="'+(tt.depVar?"cell-bad":"")+'">'+(tt.depVar?pkr(tt.depVar):"matches")+'</td><td class="'+(tt.fn?"cell-bad":"")+'">'+(tt.fn?tt.fn+" · "+pkr(tt.fv):"none")+'</td><td class="'+(tt.od?"cell-bad":"")+'">'+tt.od+'</td><td class="'+(tt.vc?"cell-bad":"")+'">'+tt.vc+'</td></tr>';
     body='<p class="meta" style="margin:0 0 6px">Every sale day totalled. Tap a day to open its store detail.</p><div class="ov-scroll"><table class="ov-tbl">'+th+trs+tot+'</table></div>';
   } else {
-    let list=stores.map(s=>{ const f=OVS.deposit5[s.code][OVDEPDAY]; const vaultNA=vaultNAof(s.code,OVDEPDAY); return {s,f,vaultNA,prio:(vaultNA||f.status==="overdue")}; });
+    let list=stores.map(s=>{ const f=OVS.deposit5[s.code][OVDEPDAY]; const vaultNA=vaultNAof(s.code,OVDEPDAY);
+      /* MOP mis-ring: cash banked short/over ≈ card settled over/short the same day */
+      const cf=(OVS.cash[s.code]||{})[OVDEPDAY]; const cardNet=cf?(cf.cardOver-cf.cardShort):0;
+      const mopTol=Math.max(500,Math.round(0.01*Math.max(Math.abs(f.depVar),Math.abs(cardNet))));
+      const mop=(f.status==="banked"&&f.depVar!==0&&cardNet!==0&&f.depVar*cardNet<0&&Math.abs(f.depVar+cardNet)<=mopTol);
+      return {s,f,vaultNA,mop,cardNet,prio:(vaultNA||f.status==="overdue")}; });
     list.sort((a,b)=>(b.prio-a.prio));
     const th='<tr><th class="stk">Store</th><th>Cash in system</th><th>Deposited in bank</th><th>Bank · slip #</th><th>Variance</th><th>Vault available</th><th>Fake notes (banking)</th><th>Status</th></tr>';
     const rows=list.map(function(o){ const s=o.s,f=o.f,vaultNA=o.vaultNA,prio=o.prio,banked=f.status==="banked";
       return '<tr class="'+(prio?"ov-prio":"")+'" onclick="ovOpen(\''+s.code+'\')"><td class="stk">'+(prio?'<span class="ov-priotag">priority</span> ':'')+esc(s.name)+' <small style="color:#9aa">'+esc(s.region)+'</small></td>'
         +'<td>'+pkr(f.sys)+'</td><td class="'+(banked?"":"muted")+'">'+(banked?pkr(f.dep):"—")+'</td>'
         +'<td class="'+(banked?"":"muted")+'">'+(banked?esc(f.bank||"—")+' · '+esc(f.slip||"—"):"—")+'</td>'
-        +'<td class="'+(banked&&(f.depVar!==0||f.mism)?"cell-bad":"muted")+'">'+(banked?((f.depVar?((f.depVar>0?"+":"−")+pkr(Math.abs(f.depVar))):"matches")+(f.mism?' <span class="ov-echip">⚑ store claimed '+(f.claim?pkr(f.claim):"matches")+' — verify slip</span>':'')):"—")+'</td>' 
+        +'<td class="'+(banked&&(f.depVar!==0||f.mism)?"cell-bad":"muted")+'">'+(banked?((f.depVar?((f.depVar>0?"+":"−")+pkr(Math.abs(f.depVar))):"matches")+(f.mism?' <span class="ov-echip">⚑ store claimed '+(f.claim?pkr(f.claim):"matches")+' — verify slip</span>':'')+(f.sysMism?' <span class="ov-echip">⚑ store typed a different system figure on deposit — verify</span>':'')+(o.mop?' <span class="ov-mchip">⇄ offsets card '+((o.cardNet>0?"+":"−")+pkr(Math.abs(o.cardNet)))+' — MOP mis-ring, verify settlement, no cash recovery</span>':'')):"—")+'</td>'
         +'<td class="'+(vaultNA?"cell-bad":"muted")+'">'+(vaultNA?"No — cash held":"Yes")+'</td>'
         +'<td class="'+(f.fakeN?"cell-bad":"muted")+'">'+(f.fakeN?f.fakeN+" · "+pkr(f.fakeV):"none")+'</td>'
         +'<td>'+ovDepStatusChip(f.status)+'</td></tr>'; }).join("");
@@ -4897,7 +4940,7 @@ function ovDepositReport(){
   }
   return '<div class="ov-cashbar"><div><b>Bank deposits</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><button class="btn btn-line btn-sm" onclick="ovDepositCsv()">⬇ Download CSV</button></div>'
     +daySel+header+body
-    +'<p class="meta" style="margin:8px 2px 0"><b>Vault available = No</b> = cash could not be secured, held unsecured (critical, shown first). <b>Status</b>: Banked / Pending (next morning) / Overdue (past day not banked). <b>Fake notes (banking)</b> = counterfeits caught at the bank.</p>';
+    +'<p class="meta" style="margin:8px 2px 0"><b>Vault available = No</b> = cash could not be secured, held unsecured (critical, shown first). <b>Status</b>: Banked / Pending (next morning) / Overdue (past day not banked). <b>Fake notes (banking)</b> = counterfeits caught at the bank. <b>⇄ offsets card</b> = the cash gap is matched by an opposite card difference the same day (sale rung on the wrong method of payment) — verify the card settlement report and correct the POS; the money is not missing.</p>';
 }
 function ovDepositCsv(){ const rows=[["Store","Region","Day","Cash in system","Deposited in bank","Bank","Slip #","Variance","Vault available","Fake notes count","Fake notes PKR","Banked by","Status"]];
   ovDepStores().forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=OVS.deposit5[s.code][dy]; const vaultNA=!!(OVS.picks5[s.code]&&OVS.picks5[s.code][dy]&&OVS.picks5[s.code][dy].status==="vault");
