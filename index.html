@@ -30,6 +30,10 @@ body{font-family:var(--sans);background:var(--canvas);color:var(--ink);font-size
 .ov-duo{display:block}
 .ov-stat b{overflow-wrap:anywhere;line-height:1.25}
 .ov-stat span{overflow-wrap:anywhere}
+.ov-line{background:#fff;border:1px solid #e3e7ee;border-radius:10px;padding:8px 12px;font-size:13.5px;line-height:1.8;margin:0 0 8px;overflow-wrap:anywhere}
+.ov-line b{font-weight:700}
+.ov-line .lred{color:#B3261E;font-weight:700}.ov-line .lamb{color:#8A5A00;font-weight:700}.ov-line .lgrn{color:#1B6B4A;font-weight:700}.ov-line .lmut{color:#6b7280}
+.ov-line .lsep{color:#c3cad6;margin:0 5px}
 .hidden{display:none !important}
 
 .mast{background:var(--sapphire);color:#fff;padding:16px 0 14px;border-bottom:3px solid var(--sapphire-dark)}
@@ -3886,6 +3890,38 @@ function ovSignoffCsv(){
     rows.push([s.region,s.name,"Day "+OVS.day,so?"Signed off":"Pending",so?so.by:"",so?so.at:""]); });
   downloadCsv("signoffs-day"+OVS.day+".csv",rows);
 }
+let OVINCCL=null, OVINCREGS=[];
+function ovIncClToggle(i){ const r=OVINCREGS[i]; OVINCCL=(OVINCCL===r)?null:r; ovRender(); }
+function ovIncDayOf(i){ const days=((CONFIG.EVENTS.find(e=>e.id===OVS.event)||{days:[]}).days||[]); const d=days.find(x=>x.date===i.date); return d?Number(d.day):null; }
+const OV_INC_GROUPS=[["Theft",["theft"],1],["Stock theft",["stocktheft"],1],["Outages",["power","gen","lift","cctv","diesel"],0],["Lost & found",["lost"],0],["Injury",["injury"],1],["Other",["fight","charge","other"],0]];
+function ovIncMatrices(items){
+  if(!items.length) return "";
+  const cnt=f=>items.filter(f).length;
+  /* 1 — type × day */
+  const typeKeys=Object.keys(OV_INC_META).filter(k=>items.some(i=>i.type===k));
+  let t1='<p class="meta" style="margin:10px 0 4px;font-weight:700">INCIDENT TYPES — BY DAY</p><div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Type</th>'+[1,2,3,4,5].map(d=>'<th>Day '+d+'</th>').join("")+'<th>Total</th></tr>';
+  typeKeys.forEach(k=>{ const m=OV_INC_META[k];
+    t1+='<tr><td class="stk">'+(m.prio?'<span class="ov-priotag">P</span> ':'')+esc(m.lab)+'</td>'
+      +[1,2,3,4,5].map(d=>{ const c=cnt(i=>i.type===k&&ovIncDayOf(i)===d); return '<td class="'+(c?(m.prio?"cell-bad":""):"muted")+'">'+(c||"—")+'</td>'; }).join("")
+      +'<td><b>'+cnt(i=>i.type===k)+'</b></td></tr>'; });
+  t1+='<tr class="ov-tot"><td class="stk">All types</td>'+[1,2,3,4,5].map(d=>{ const c=cnt(i=>ovIncDayOf(i)===d); return '<td>'+(c||"—")+'</td>'; }).join("")+'<td><b>'+items.length+'</b></td></tr></table></div>';
+  /* 2 — cluster × type group, tap a cluster for its stores */
+  const codeReg={}, codeName={}; OVS.stores.forEach(s=>{ codeReg[s.code]=s.region; codeName[s.code]=s.name; });
+  const regs=[]; OVS.stores.forEach(s=>{ if(regs.indexOf(s.region)<0) regs.push(s.region); });
+  OVINCREGS=regs.filter(r=>cnt(i=>codeReg[i.code]===r)>0).sort((a,b)=>cnt(i=>codeReg[i.code]===b)-cnt(i=>codeReg[i.code]===a));
+  const gcell=(f,g)=>{ const c=cnt(i=>f(i)&&g[1].indexOf(i.type)>-1); return '<td class="'+(c?(g[2]?"cell-bad":""):"muted")+'">'+(c||"—")+'</td>'; };
+  let t2='<p class="meta" style="margin:14px 0 4px;font-weight:700">CLUSTER × TYPE — tap a cluster manager to open their stores</p><div class="ov-scroll"><table class="ov-tbl"><tr><th class="stk">Cluster manager</th>'+OV_INC_GROUPS.map(g=>'<th>'+g[0]+'</th>').join("")+'<th>Total</th></tr>';
+  OVINCREGS.forEach((r,ix)=>{ const open=OVINCCL===r;
+    t2+='<tr class="ov-dayrow" onclick="ovIncClToggle('+ix+')"><td class="stk">'+esc(r)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td>'
+      +OV_INC_GROUPS.map(g=>gcell(i=>codeReg[i.code]===r,g)).join("")+'<td><b>'+cnt(i=>codeReg[i.code]===r)+'</b></td></tr>';
+    if(open){ OVS.stores.filter(s=>s.region===r&&cnt(i=>i.code===s.code)>0).sort((a,b)=>cnt(i=>i.code===b.code)-cnt(i=>i.code===a.code)).forEach(s=>{
+      t2+='<tr class="ov-sub" onclick="ovOpen(\''+s.code+'\')"><td class="stk" style="padding-left:22px">'+esc(s.name)+'</td>'
+        +OV_INC_GROUPS.map(g=>gcell(i=>i.code===s.code,g)).join("")+'<td><b>'+cnt(i=>i.code===s.code)+'</b></td></tr>'; }); }
+  });
+  t2+='<tr class="ov-tot"><td class="stk">NATIONAL</td>'+OV_INC_GROUPS.map(g=>gcell(()=>true,g)).join("")+'<td><b>'+items.length+'</b></td></tr></table></div>'
+    +'<p class="meta" style="margin:6px 2px 10px"><b>P</b> = priority type (red when present). <b>Outages</b> groups electricity, generator, lift, CCTV and diesel. Tap a store row to open its full incident detail. The complete incident log follows below.</p>';
+  return t1+t2;
+}
 function ovIncidentReport(){
   const codes=ovTableStores().map(s=>s.code);
   let items=(OVS.incidents||[]).filter(i=>codes.includes(i.code));
@@ -3893,7 +3929,8 @@ function ovIncidentReport(){
   const hot=items.filter(i=>i.prio||i.ongoing).length;
   const csv='<div class="ov-cashbar"><div><b>Incident log</b> · '+(OVREGFILTER||OVREGION||"all cluster managers")+'</div><button class="btn btn-line btn-sm" onclick="ovIncidentCsv()">⬇ Download CSV</button></div>';
   if(!items.length) return csv+'<div class="card"><div class="card-body"><span class="meta">No incidents logged in this scope. All clear.</span></div></div>';
-  return csv+'<p class="meta" style="margin:0 0 10px"><b>'+items.length+'</b> incident'+(items.length>1?'s':'')+(hot?' · <b style="color:#B3261E">'+hot+' need attention</b> (priority / ongoing — shown first)':'')+'</p>'
+  return csv+ovIncMatrices(items)
+    +'<p class="meta" style="margin:0 0 10px"><b>'+items.length+'</b> incident'+(items.length>1?'s':'')+(hot?' · <b style="color:#B3261E">'+hot+' need attention</b> (priority / ongoing — shown first)':'')+'</p>'
     +items.map(x=>incCardHTML(x,true)).join("");
 }
 function ovOverviewCsv(){
@@ -4327,15 +4364,15 @@ async function ovPrepReview(code,dy,decision){
 function ovIncidentStrip(){
   const codes=ovTableStores().map(s=>s.code);
   const items=(OVS.incidents||[]).filter(i=>codes.includes(i.code));
-  if(!items.length) return '<div class="ovh-sechead">🚨 Incidents</div><div class="ov-strip"><div class="ov-stat good"><b>0</b><span>incidents logged</span></div></div>';
+  if(!items.length) return '<div class="ov-line">🚨 <b>Incidents:</b> <span class="lgrn">0 logged — all clear</span></div>';
   const dayDate=((CONFIG.EVENTS[0]||{days:[]}).days.find(d=>d.day===OVS.day)||{}).date||"";
   const today=items.filter(i=>i.date===dayDate).length;
   const hot=items.filter(i=>String(i.follow||"").indexOf("Yes")===0).length;
-  return '<div class="ovh-sechead">🚨 Incidents — tap to open the log</div>'
-    +'<div class="ov-strip" style="cursor:pointer" onclick="ovSetMod(\'incidents\')">'
-    +'<div class="ov-stat'+(items.length?' warn':' good')+'"><b>'+items.length+'</b><span>total this event</span></div>'
-    +'<div class="ov-stat"><b>'+today+'</b><span>on the day in view</span></div>'
-    +'<div class="ov-stat'+(hot?' bad':' good')+'"><b>'+hot+'</b><span>🔥 follow-up pending</span></div></div>';
+  const S='<span class="lsep">·</span>';
+  return '<div class="ov-line" style="cursor:pointer" onclick="ovSetMod(\'incidents\')">🚨 <b>Incidents:</b> '
+    +'<span class="lamb">'+items.length+' this event</span>'+S+today+' on the day in view'+S
+    +(hot?'<span class="lred">🔥 '+hot+' follow-up pending</span>':'<span class="lgrn">no follow-ups pending</span>')
+    +' <span style="color:#17457F;font-size:12px">open the log ▸</span></div>';
 }
 function ovPrepStrip(){
   const tomorrow=OVS.tomorrow; if(tomorrow>5) return "";
@@ -4344,12 +4381,12 @@ function ovPrepStrip(){
   stores.forEach(s=>{ const d=(OVS.prep5[s.code]||{})[tomorrow]; if(!d) return; filed++;
     if(d.prepStatus==="approved")app++; else if(d.prepStatus==="sentback")sb++; });
   const missing=stores.length-filed;
-  return '<div class="ovh-sechead">🌙 Tomorrow\'s preparation — Day '+tomorrow+'</div>'
-    +'<div class="ov-strip" style="cursor:pointer" onclick="ovSetPrepDay('+tomorrow+');ovSetMod(\'prep\')">'
-    +'<div class="ov-stat'+(missing?' bad':' good')+'"><b>'+filed+'/'+stores.length+'</b><span>prep filed</span></div>'
-    +'<div class="ov-stat good"><b>'+app+'</b><span>approved</span></div>'
-    +'<div class="ov-stat'+(sb?' bad':'')+'"><b>'+sb+'</b><span>sent back</span></div>'
-    +'<div class="ov-stat'+(missing?' warn':'')+'"><b>'+missing+'</b><span>not filed</span></div></div>';
+  const S='<span class="lsep">·</span>';
+  return '<div class="ov-line" style="cursor:pointer" onclick="ovSetPrepDay('+tomorrow+');ovSetMod(\'prep\')">🌙 <b>Tomorrow\'s preparation — Day '+tomorrow+':</b> '
+    +'<span class="'+(missing?'lred':'lgrn')+'">'+filed+'/'+stores.length+' filed</span>'+S
+    +app+' approved'+S+(sb?'<span class="lred">'+sb+' sent back</span>':sb+' sent back')+S
+    +(missing?'<span class="lamb">'+missing+' not filed</span>':'0 not filed')
+    +' <span style="color:#17457F;font-size:12px">open ▸</span></div>';
 }
 function ovPrepReport(){
   const dy=ovPrepDay(); const stores=ovTableStores();
@@ -4453,14 +4490,16 @@ function ovNationalStrip(){
     const dp=(OVS.deposit5[s.code]||{})[dy]; if(dp&&dp.status==="banked")banked++; });
   const avg=stores.length?Math.round(pctSum/stores.length):0;
   const inc=ovDayIncidents(dy), hot=inc.filter(i=>i.prio||i.ongoing).length;
-  return '<div class="ov-strip">'
-    +'<div class="ov-stat'+sevCls(avg)+'"><b>'+avg+'%</b><span>avg compliance</span></div>'
-    +'<div class="ov-stat"><b>'+full+'/'+stores.length+'</b><span>fully filed</span></div>'
-    +'<div class="ov-stat'+(signed===stores.length&&stores.length?" good":"")+'"><b>'+signed+'/'+stores.length+'</b><span>signed off</span></div>'
-    +(function(){ const sp=ovSplitOf(stores.map(s=>s.code),dy);
-       return '<div class="ov-stat'+(net<0?" bad":net>0?" good":"")+'"><b>'+(net===0?"0":(net>0?"+":"−")+fmt(Math.abs(net)))+'</b><span>net impact PKR'+((sp.cash||sp.card)?' · cash '+ovSignedNum(sp.cash)+' · card '+ovSignedNum(sp.card):'')+'</span></div>'; })()
-    +'<div class="ov-stat'+(hot?" bad":inc.length?" warn":"")+'"><b>'+inc.length+'</b><span>incidents'+(hot?" · "+hot+" hot":"")+'</span></div>'
-    +'<div class="ov-stat'+(banked<stores.length&&ovDepositDue(dy)?" warn":"")+'"><b>'+banked+'/'+stores.length+'</b><span>deposits banked</span></div>'
+  const S='<span class="lsep">·</span>';
+  const sp=ovSplitOf(stores.map(s=>s.code),dy);
+  const sevSpan=p=>'<span class="'+(sev(p)==="ok"?"lgrn":sev(p)==="warn"?"lamb":"lred")+'">'+p+'% avg compliance</span>';
+  return '<div class="ov-line">📊 <b>Day '+dy+':</b> '+sevSpan(avg)+S
+    +full+'/'+stores.length+' fully filed'+S
+    +'<span class="'+(signed===stores.length&&stores.length?"lgrn":"lred")+'">'+signed+'/'+stores.length+' signed off</span>'+S
+    +'net <span class="'+(net<0?"lred":net>0?"lgrn":"lmut")+'">'+(net===0?"0":(net>0?"+":"−")+fmt(Math.abs(net)))+'</span>'
+    +((sp.cash||sp.card)?' <span class="lmut">(cash '+ovSignedNum(sp.cash)+' · card '+ovSignedNum(sp.card)+')</span>':'')+S
+    +'<span class="'+(hot?"lred":inc.length?"lamb":"lgrn")+'">'+inc.length+' incidents'+(hot?" · "+hot+" hot":"")+'</span>'+S
+    +(banked<stores.length&&ovDepositDue(dy)?'<span class="lamb">'+banked+'/'+stores.length+' deposits banked</span>':banked+'/'+stores.length+' deposits banked')
     +'</div>';
 }
 function ovAttention(){
@@ -4493,29 +4532,37 @@ function ovClusterScore(){
     const inc=(OVS.incidents||[]).filter(i=>list.some(s=>s.code===i.code)).length;
     return {mgr:mgr,list:list,avg:list.length?Math.round(pctSum/list.length):0,signed:signed,net:net,apr:apr,inc:inc};
   }).sort((a,b)=>b.avg-a.avg||a.mgr.localeCompare(b.mgr));
-  const bar=(sg,n)=>{ const p=n?Math.round(sg/n*100):0;
-    return '<div style="background:#eef0f4;border-radius:5px;height:14px;position:relative;min-width:90px">'
-      +'<div style="width:'+p+'%;background:'+sevC(p).solid+';height:14px;border-radius:5px"></div>'
-      +'<span style="position:absolute;right:5px;top:0;font-size:10.5px;color:#4b5563;font-weight:700;line-height:14px">'+sg+'/'+n+'</span></div>'; };
+  const soCell=(sg,n)=>{ const p=n?Math.round(sg/n*100):0;
+    return ovPctBadge(p)+' <small style="color:#6b7280;font-weight:700">'+sg+'/'+n+'</small>'; };
+  /* budget spent per store: latest filed day's cumulative to-date vs allocation */
+  const budOf=code=>{ const b=OVS.budget5[code]||{}; let best=null;
+    for(let d2=1;d2<=5;d2++){ if(b[d2]&&(b[d2].alloc||b[d2].toDate)) best=b[d2]; }
+    return best?{alloc:ovN(best.alloc),spent:ovN(best.toDate)}:{alloc:0,spent:0}; };
+  const budCell=codes=>{ let al=0,sp=0; codes.forEach(c=>{ const b=budOf(c); al+=b.alloc; sp+=b.spent; });
+    if(!al&&!sp) return '<span style="color:#9aa3af">—</span>';
+    const bp=al?Math.round(sp/al*100):null;
+    const col=bp===null?"#6b7280":bp>90?"#B3261E":bp>75?"#8A5A00":"#1B6B4A";
+    return fmt(sp)+(bp===null?'':' <span style="color:'+col+';font-weight:800">'+bp+'%</span>'); };
   let tot={n:0,pctSum:0,signed:0,net:0};
   rows.forEach(r=>{ tot.n+=r.list.length; tot.pctSum+=r.avg*r.list.length; tot.signed+=r.signed; tot.net+=r.net; });
   const trs=rows.map(r=>{
     const open=OVCLEXP[r.mgr];
     let sub="";
-    if(open) sub='<tr><td colspan="6" style="background:#f7f8fa;padding:8px 10px"><div class="ovh-badges" style="justify-content:flex-start">'
+    if(open) sub='<tr><td colspan="7" style="background:#f7f8fa;padding:8px 10px"><div class="ovh-badges" style="justify-content:flex-start">'
       +r.list.map(s=>{ const c=ovCompliance(s.code,dy); const sg=(OVS.signed5[s.code]||{})[String(dy)];
         return '<span class="ovh-b '+(sg?'green':c.pct>=70?'amber':'red')+'" style="cursor:pointer" onclick="ovOpen(\''+s.code+'\')">'+esc(s.name.split(",")[0])+' '+c.pct+'%'+(sg?' ✓':'')+'</span>'; }).join(" ")
       +'</div></td></tr>';
     return '<tr style="cursor:pointer" onclick="ovClToggle(\''+esc(r.mgr)+'\')">'
       +'<td class="stk" style="font-weight:600">'+esc(r.mgr)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td>'
-      +'<td>'+r.list.length+'</td><td>'+ovPctBadge(r.avg)+'</td><td>'+bar(r.signed,r.list.length)+'</td>'
+      +'<td>'+r.list.length+'</td><td>'+ovPctBadge(r.avg)+'</td><td>'+soCell(r.signed,r.list.length)+'</td>'
+      +'<td>'+budCell(r.list.map(s=>s.code))+'</td>'
       +'<td>'+ovNetFmtSplit(r.net,ovSplitOf(r.list.map(s=>s.code),dy))+'</td><td class="'+(r.apr?'cell-bad':'')+'">'+(r.inc||"·")+(r.apr?' <b>'+r.apr+'⏳</b>':'')+'</td></tr>'+sub;
   }).join("");
   const nat='<tr class="ov-tot"><td class="stk">'+(OVROLE==="hq"?"NATIONAL":OVROLE==="regional"?"YOUR REGION":"YOUR CLUSTER")+' · '+tot.n+' stores</td><td></td>'
-    +'<td>'+ovPctBadge(tot.n?Math.round(tot.pctSum/tot.n):0)+'</td><td>'+bar(tot.signed,tot.n)+'</td><td>'+ovNetFmtSplit(tot.net,ovSplitOf(stores.map(s=>s.code),dy))+'</td><td></td></tr>';
+    +'<td>'+ovPctBadge(tot.n?Math.round(tot.pctSum/tot.n):0)+'</td><td>'+soCell(tot.signed,tot.n)+'</td><td>'+budCell(stores.map(s=>s.code))+'</td><td>'+ovNetFmtSplit(tot.net,ovSplitOf(stores.map(s=>s.code),dy))+'</td><td></td></tr>';
   return '<div class="ov-scroll"><table class="ov-tbl">'
-    +'<tr><th class="stk">Cluster manager</th><th>Stores</th><th>Compliance</th><th>Sign-off ratio</th><th>Net impact</th><th>Incidents · approvals</th></tr>'
-    +trs+nat+'</table></div><p class="meta" style="margin:6px 2px 0">Tap a manager row to see their stores; tap a store chip to open it.</p>';
+    +'<tr><th class="stk">Cluster manager</th><th>Stores</th><th>Compliance</th><th>Sign-off</th><th>Budget spent</th><th>Net impact</th><th>Incidents · approvals</th></tr>'
+    +trs+nat+'</table></div><p class="meta" style="margin:6px 2px 0">Tap a manager row to see their stores; tap a store chip to open it. <b>Budget spent</b> = event budget spend to date vs allocation (green ≤75%, amber ≤90%, red above).</p>';
 }
 function ovMatrix(k){ OVMATKEY=k; OVMOD="matrix"; ovRender(); }
 function ovModuleBars(){
@@ -4857,30 +4904,61 @@ function ovCashierAgg(){
   out.forEach(c=>{ c.net=(c.co-c.cs)+(c.ko-c.ks); c.gross=c.cs+c.co+c.ks+c.ko; c.zeroButErrs=(c.net===0&&c.gross>0); });
   return out.sort((a,b)=> (a.net-b.net)||(b.gross-a.gross)); }   /* worst net first, then most errors */
 function ovNetCellHtml(n){ return '<td class="'+(n<0?'cell-bad':'')+'" style="font-weight:800;'+(n>0?'color:#1B6B4A;':'')+'">'+(n===0?'0':(n>0?'+':'−')+pkr(Math.abs(n)))+'</td>'; }
+let OVCSHST=null, OVCSHALL={}, OVCSHNAMES=[];
+function ovCshStore(i){ const n=OVCSHNAMES[i]; OVCSHST=(OVCSHST===n)?null:n; ovRender(); }
+function ovCshAll(i){ const n=OVCSHNAMES[i]; OVCSHALL[n]=!OVCSHALL[n]; ovRender(); }
+function ovCashierStoreAgg(){
+  const m={}; (OVS.tillLines||[]).forEach(l=>{ if(OVREGFILTER && l.region!==OVREGFILTER) return; if(OVROLE==="cluster" && l.region!==OVREGION) return;
+    if(!m[l.store]) m[l.store]={store:l.store,region:l.region,lines:0,inc:0,cs:0,co:0,ks:0,ko:0,cashiers:{}};
+    const S=m[l.store]; const k=(l.payroll||"?")+"|"+(l.cashier||"?");
+    if(!S.cashiers[k]) S.cashiers[k]={payroll:l.payroll,cashier:l.cashier,lines:0,inc:0,cs:0,co:0,ks:0,ko:0};
+    [S,S.cashiers[k]].forEach(o=>{ o.lines++;
+      if(l.cashVar<0) o.cs+=-l.cashVar; else if(l.cashVar>0) o.co+=l.cashVar;
+      if(l.cardVar<0) o.ks+=-l.cardVar; else if(l.cardVar>0) o.ko+=l.cardVar;
+      if(l.result==="Short"||l.result==="Over"||l.cardResult==="Short"||l.cardResult==="Over") o.inc++; });
+  });
+  const out=Object.values(m);
+  out.forEach(S=>{ S.net=(S.co-S.cs)+(S.ko-S.ks); S.gross=S.cs+S.co+S.ks+S.ko;
+    S.clist=Object.values(S.cashiers); S.clist.forEach(c=>{ c.net=(c.co-c.cs)+(c.ko-c.ks); c.gross=c.cs+c.co+c.ks+c.ko; c.zeroButErrs=(c.net===0&&c.gross>0); });
+    S.clist.sort((a,b)=>(b.gross-a.gross)||(a.net-b.net)); });
+  return out.sort((a,b)=>(b.cs-a.cs)||(b.gross-a.gross)); }  /* worst cash short first, balanced last */
 function ovCashierReport(){
-  const list=ovCashierAgg();
+  const list=ovCashierStoreAgg();
   if(!list.length) return '<div class="ov-cashbar"><div><b>Cashier variance</b></div></div><div class="card"><div class="card-body"><span class="meta">No till lines recorded for this scope.</span></div></div>';
-  const th='<tr><th class="stk">Cashier</th><th>Payroll</th><th>Errors</th><th>Cash short</th><th>Cash excess</th><th>Card short</th><th>Card excess</th><th>NET impact</th><th>Store(s)</th></tr>';
-  let trs="", T={cs:0,co:0,ks:0,ko:0,inc:0};
-  const zeroErrs=list.filter(c=>c.zeroButErrs).length;
-  list.forEach(c=>{ T.cs+=c.cs;T.co+=c.co;T.ks+=c.ks;T.ko+=c.ko;T.inc+=c.inc;
-    trs+='<tr'+(c.zeroButErrs?' style="background:#FDF3E2"':'')+'><td class="stk">'+esc(c.cashier)
-      +(c.zeroButErrs?' <span class="ovh-b amber">⚠ settles to 0 — errors made</span>':'')+'</td><td class="muted">'+esc(c.payroll)+'</td><td class="'+(c.inc?'cell-warn':'muted')+'">'+c.inc+'</td>'
-      +'<td class="'+(c.cs>0?"cell-bad":"muted")+'">'+(c.cs>0?pkr(c.cs):"0")+'</td>'
-      +'<td class="'+(c.co>0?"cell-warn":"muted")+'">'+(c.co>0?pkr(c.co):"0")+'</td>'
-      +'<td class="'+(c.ks>0?"cell-bad":"muted")+'">'+(c.ks>0?pkr(c.ks):"0")+'</td>'
-      +'<td class="'+(c.ko>0?"cell-warn":"muted")+'">'+(c.ko>0?pkr(c.ko):"0")+'</td>'
-      +ovNetCellHtml(c.net)
-      +'<td class="muted">'+esc([...c.stores].join(", ")||"—")+'</td></tr>'; });
+  OVCSHNAMES=list.map(S=>S.store);
+  const th='<tr><th class="stk">Store / cashier (payroll)</th><th>Tills</th><th>Errors</th><th>Cash short</th><th>Cash excess</th><th>Card short</th><th>Card excess</th><th>NET impact</th></tr>';
+  let trs="", T={cs:0,co:0,ks:0,ko:0,inc:0,lines:0}, nCashiers=0, zeroErrs=0;
+  list.forEach((S,ix)=>{ T.cs+=S.cs;T.co+=S.co;T.ks+=S.ks;T.ko+=S.ko;T.inc+=S.inc;T.lines+=S.lines; nCashiers+=S.clist.length; zeroErrs+=S.clist.filter(c=>c.zeroButErrs).length;
+    const open=OVCSHST===S.store;
+    trs+='<tr class="ov-dayrow" onclick="ovCshStore('+ix+')"><td class="stk">'+esc(S.store)+' <small style="color:#9aa">'+esc(S.region)+'</small> <span class="ov-caret">'+(open?"▾":"▸")+'</span></td>'
+      +'<td>'+S.lines+'</td><td class="'+(S.inc?'cell-warn':'muted')+'">'+S.inc+'</td>'
+      +'<td class="'+(S.cs>0?"cell-bad":"muted")+'">'+(S.cs>0?pkr(S.cs):"0")+'</td>'
+      +'<td class="'+(S.co>0?"cell-warn":"muted")+'">'+(S.co>0?pkr(S.co):"0")+'</td>'
+      +'<td class="'+(S.ks>0?"cell-bad":"muted")+'">'+(S.ks>0?pkr(S.ks):"0")+'</td>'
+      +'<td class="'+(S.ko>0?"cell-warn":"muted")+'">'+(S.ko>0?pkr(S.ko):"0")+'</td>'
+      +(S.gross===0?'<td style="color:#1B6B4A;font-weight:800">balanced</td>':ovNetCellHtml(S.net))+'</tr>';
+    if(open){ const showAll=!!OVCSHALL[S.store];
+      const vis=S.clist.filter(c=>showAll||c.gross>0), hid=S.clist.length-S.clist.filter(c=>c.gross>0).length;
+      vis.forEach(c=>{ trs+='<tr class="ov-sub"'+(c.zeroButErrs?' style="background:#FDF3E2"':'')+'><td class="stk" style="padding-left:22px"><span style="font-family:monospace;font-size:11px">'+esc(c.payroll||"—")+'</span> '+esc(c.cashier||"—")
+          +(c.zeroButErrs?' <span class="ovh-b amber">⚠ settles to 0 — errors made</span>':'')+'</td>'
+        +'<td>'+c.lines+'</td><td class="'+(c.inc?'cell-warn':'muted')+'">'+c.inc+'</td>'
+        +'<td class="'+(c.cs>0?"cell-bad":"muted")+'">'+(c.cs>0?pkr(c.cs):"0")+'</td>'
+        +'<td class="'+(c.co>0?"cell-warn":"muted")+'">'+(c.co>0?pkr(c.co):"0")+'</td>'
+        +'<td class="'+(c.ks>0?"cell-bad":"muted")+'">'+(c.ks>0?pkr(c.ks):"0")+'</td>'
+        +'<td class="'+(c.ko>0?"cell-warn":"muted")+'">'+(c.ko>0?pkr(c.ko):"0")+'</td>'
+        +(c.gross===0?'<td style="color:#1B6B4A;font-weight:800">balanced</td>':ovNetCellHtml(c.net))+'</tr>'; });
+      if(hid>0) trs+='<tr class="ov-sub"><td class="stk" style="padding-left:22px;color:#5B7C99;cursor:pointer" onclick="event.stopPropagation();ovCshAll('+ix+')">'+(showAll?"hide balanced cashiers ▴":hid+" balanced cashier"+(hid>1?"s":"")+" hidden — show all ▸")+'</td><td colspan="7"></td></tr>';
+    }
+  });
   const TN=(T.co-T.cs)+(T.ko-T.ks);
-  const tot='<tr class="ov-tot"><td class="stk">TOTAL · '+list.length+' cashiers</td><td></td><td>'+T.inc+'</td>'
+  const tot='<tr class="ov-tot"><td class="stk">ALL '+list.length+' STORES · '+nCashiers+' cashiers</td><td>'+T.lines+'</td><td>'+T.inc+'</td>'
     +'<td class="'+(T.cs>0?"cell-bad":"")+'">'+pkr(T.cs)+'</td><td class="'+(T.co>0?"cell-warn":"")+'">'+pkr(T.co)+'</td>'
     +'<td class="'+(T.ks>0?"cell-bad":"")+'">'+pkr(T.ks)+'</td><td class="'+(T.ko>0?"cell-warn":"")+'">'+pkr(T.ko)+'</td>'
-    +ovNetCellHtml(TN)+'<td></td></tr>';
-  return '<div class="ov-cashbar"><div><b>Cashier variance — cash + card, net impact</b> · '+(OVREGFILTER||OVREGION||"all regions")+' · worst net first</div><button class="btn btn-line btn-sm" onclick="ovCashierCsv()">⬇ Download CSV</button></div>'
-    +(zeroErrs?'<p class="meta" style="margin:0 0 8px;color:#8A5A00"><b>⚠ '+zeroErrs+' cashier'+(zeroErrs>1?'s':'')+' net to ZERO but made errors on both sides</b> — highlighted amber below. A cash short covered by a card excess still means two mistakes.</p>':'')
+    +ovNetCellHtml(TN)+'</tr>';
+  return '<div class="ov-cashbar"><div><b>Cashier variance — store → payroll</b> · '+(OVREGFILTER||OVREGION||"all regions")+' · worst cash short first</div><button class="btn btn-line btn-sm" onclick="ovCashierCsv()">⬇ Download CSV</button></div>'
+    +(zeroErrs?'<p class="meta" style="margin:0 0 8px;color:#8A5A00"><b>⚠ '+zeroErrs+' cashier'+(zeroErrs>1?'s':'')+' net to ZERO but made errors on both sides</b> — amber inside their store. A cash short covered by a card excess still means two mistakes.</p>':'')
     +'<div class="ov-scroll"><table class="ov-tbl">'+th+trs+tot+'</table></div>'
-    +'<p class="meta" style="margin:8px 2px 0"><b>NET impact</b> = (cash excess − cash short) + (card excess − card short), per cashier across stores and days. Red net = money missing. Amber rows settle to 0 yet carry errors — the count in the Errors column is the discipline signal.</p>';
+    +'<p class="meta" style="margin:8px 2px 0">Tap a store for its cashiers, payroll number first; cashiers with variances on top, balanced ones behind "show all". <b>NET impact</b> = (cash excess − cash short) + (card excess − card short) across the event. Red net = money missing. CSV keeps every cashier row with payroll number.</p>';
 }
 function ovCashierCsv(){ const rows=[["Cashier","Payroll","Errors","Cash short","Cash excess","Card short","Card excess","NET impact","Settles to 0 but errors made","Stores"]];
   ovCashierAgg().forEach(c=>rows.push([c.cashier,c.payroll,c.inc,c.cs,c.co,c.ks,c.ko,c.net,c.zeroButErrs?"YES — check":"",[...c.stores].join("; ")]));
