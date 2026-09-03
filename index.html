@@ -20,7 +20,14 @@
 html,body{margin:0;padding:0}
 body{font-family:var(--sans);background:var(--canvas);color:var(--ink);font-size:16px;line-height:1.45;-webkit-text-size-adjust:100%}
 .wrap{max-width:760px;margin:0 auto;padding:0 16px 40px}
-@media(min-width:1000px){ .wrap{max-width:1360px} .ov-strip{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))} .ov-stat b{font-size:20px} }
+@media(min-width:1000px){
+  .wrap{max-width:1140px}
+  .ov-strip{display:flex;flex-wrap:wrap;gap:10px}
+  .ov-stat{flex:0 1 168px;min-width:150px}
+  .ov-stat b{font-size:19px}
+  .ov-duo{display:grid;grid-template-columns:1fr 1fr;gap:0 22px;align-items:start}
+}
+.ov-duo{display:block}
 .ov-stat b{overflow-wrap:anywhere;line-height:1.25}
 .ov-stat span{overflow-wrap:anywhere}
 .hidden{display:none !important}
@@ -3280,12 +3287,17 @@ function ovBuild(){
       OVS.net5[st.code][dy]=de?aggTill(de).net:0;
       OVS.prep5[st.code][dy]=rows.prep?rows.prep.data:null;
       if(dy===1){ const pr2=rowsOf(st.code,'P'); OVS.postAll[st.code]=pr2.post?pr2.post.data:null; }
-      const sys=de?Number(de.cashInSystem||0):(dp?Number(dp.cashInSystem||0):0);
-      const dep=dp?Number(dp.cashDeposited||0):0;
-      const dvar=dp?Number(dp.variance||0):0;
+      const sys=de?ovN(de.cashInSystem):(dp?ovN(dp.cashInSystem):0);
+      const dep=dp?ovN(dp.cashDeposited):0;
+      /* variance is COMPUTED from the figures — the store's own claim is kept
+         separately and flagged when it disagrees (stores sometimes type "matches"
+         against numbers that do not). */
+      const claim=dp?ovN(dp.variance):0;
+      const dvar=dp?(dep-ovN(dp.cashInSystem)):0;
+      const dmis=dp?Math.abs(dvar-claim)>1:false;
       const fakes=(de&&de.fakeNotes)||[];
-      OVS.cash[st.code][dy]={sys:sys,dep:dep,depVar:dvar,short:de?Number(de.declaredShortage||0):0,
-        over:de?Number(de.declaredExcess||0):0,fakeN:fakes.length,fakeV:fakes.reduce((a,x)=>a+Number(x.denomination||0)*Number(x.quantity||0),0)};
+      OVS.cash[st.code][dy]={sys:sys,dep:dep,depVar:dvar,short:de?ovN(de.declaredShortage):0,
+        over:de?ovN(de.declaredExcess):0,fakeN:fakes.length,fakeV:fakes.reduce((a,x)=>a+ovN(x.denomination)*ovN(x.quantity),0)};
       /* pick-ups */
       const pks=(rows.picks||[]).map(x=>x.data||{});
       const p1=pks.find(x=>String(x.seq)==="1"), p2=pks.find(x=>String(x.seq)==="2");
@@ -3298,6 +3310,7 @@ function ovBuild(){
       /* deposit status: banked if filed; overdue if the day passed unbanked; else pending */
       const bank=dp||null;
       OVS.deposit5[st.code][dy]={ sys:sys, dep:bank?dep:0, depVar:bank?dvar:0,
+        claim:bank?claim:0, mism:bank?dmis:false,
         held:1, bankedBy:bank?((bank.people||[]).map(x=>x.name).join(", ")||""):"",
         bank:bank?(bank.bankName||""):"", slip:bank?(bank.slipNo||""):"",
         fakeN:bank?((bank.fakeNotes||[]).length):0,
@@ -3360,11 +3373,11 @@ function ovBuild(){
           OVS.budCats[st.code][k]=(OVS.budCats[st.code][k]||0)+v; }); }
       /* till lines for cashier variance */
       if(de)(de.tills||[]).forEach(t=>{
-        const cashVar=(t.variance!=null&&t.variance!=="")?Number(t.variance):(t.result==="Short"?-Number(t.amount||0):t.result==="Over"?Number(t.amount||0):0);
-        const cardVar=(t.cardVariance!=null&&t.cardVariance!=="")?Number(t.cardVariance):(t.cardResult==="Short"?-Number(t.cardAmount||0):t.cardResult==="Over"?Number(t.cardAmount||0):0);
+        const cashVar=(t.variance!=null&&t.variance!=="")?ovN(t.variance):(t.result==="Short"?-ovN(t.amount):t.result==="Over"?ovN(t.amount):0);
+        const cardVar=(t.cardVariance!=null&&t.cardVariance!=="")?ovN(t.cardVariance):(t.cardResult==="Short"?-ovN(t.cardAmount):t.cardResult==="Over"?ovN(t.cardAmount):0);
         OVS.tillLines.push({store:st.name,region:st.region,day:dy,
-          cashier:t.cashier||"",payroll:t.payroll||("Till "+t.pos),result:t.result||"Balanced",amount:Number(t.amount||0),
-          cardResult:t.cardResult||"",cardAmount:Number(t.cardAmount||0),cashVar:cashVar,cardVar:cardVar}); });
+          cashier:t.cashier||"",payroll:t.payroll||("Till "+t.pos),result:t.result||"Balanced",amount:ovN(t.amount),
+          cardResult:t.cardResult||"",cardAmount:ovN(t.cardAmount),cashVar:cashVar,cardVar:cardVar}); });
     }
   });
 
@@ -4541,8 +4554,7 @@ function ovHqHome(){
     +(CONFIG.EVENTS[0]||{days:[]}).days.map(d=>{ const fut=d.day>OVS.today;
        return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?(OVS.preEvent?" · starts tomorrow":" · today"):"")+'</button>'; }).join("")+'</div>';
   return daysBar
-    +ovPrepStrip()
-    +ovIncidentStrip()
+    +'<div class="ov-duo"><div>'+ovPrepStrip()+'</div><div>'+ovIncidentStrip()+'</div></div>'
     +ovNationalStrip()
     +ovAttention()
     +ovPostStrip()
@@ -4847,7 +4859,7 @@ function ovDepositReport(){
       return '<tr class="'+(prio?"ov-prio":"")+'" onclick="ovOpen(\''+s.code+'\')"><td class="stk">'+(prio?'<span class="ov-priotag">priority</span> ':'')+esc(s.name)+' <small style="color:#9aa">'+esc(s.region)+'</small></td>'
         +'<td>'+pkr(f.sys)+'</td><td class="'+(banked?"":"muted")+'">'+(banked?pkr(f.dep):"—")+'</td>'
         +'<td class="'+(banked?"":"muted")+'">'+(banked?esc(f.bank||"—")+' · '+esc(f.slip||"—"):"—")+'</td>'
-        +'<td class="'+(banked&&f.depVar!==0?"cell-bad":"muted")+'">'+(banked?(f.depVar?pkr(f.depVar):"matches"):"—")+'</td>' 
+        +'<td class="'+(banked&&(f.depVar!==0||f.mism)?"cell-bad":"muted")+'">'+(banked?((f.depVar?((f.depVar>0?"+":"−")+pkr(Math.abs(f.depVar))):"matches")+(f.mism?' <span class="ov-echip">⚑ store claimed '+(f.claim?pkr(f.claim):"matches")+' — verify slip</span>':'')):"—")+'</td>' 
         +'<td class="'+(vaultNA?"cell-bad":"muted")+'">'+(vaultNA?"No — cash held":"Yes")+'</td>'
         +'<td class="'+(f.fakeN?"cell-bad":"muted")+'">'+(f.fakeN?f.fakeN+" · "+pkr(f.fakeV):"none")+'</td>'
         +'<td>'+ovDepStatusChip(f.status)+'</td></tr>'; }).join("");
