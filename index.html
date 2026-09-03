@@ -3276,7 +3276,7 @@ function ovBuild(){
   });
 
   /* 5-day structures (zero-filled where nothing filed) */
-  OVS.cash={}; OVS.picks5={}; OVS.deposit5={}; OVS.wager5={}; OVS.guard5={}; OVS.rating5={}; OVS.budget5={}; OVS.budCats={};
+  OVS.cash={}; OVS.picks5={}; OVS.deposit5={}; OVS.wager5={}; OVS.guard5={}; OVS.rating5={}; OVS.budget5={}; OVS.budCats={}; OVS.budCats5={};
   OVS.tillLines=[]; OVS.filed5={}; OVS.net5={}; OVS.netSplit5={}; OVS.prep5={}; OVS.postAll={}; OVS.support5={};
   const today=bd;
   OVS.stores.forEach(st=>{
@@ -3387,6 +3387,10 @@ function ovBuild(){
       if(bg&&bg.categories){ OVS.budCats[st.code]=OVS.budCats[st.code]||{};
         Object.keys(bg.categories).forEach(k=>{ const v=Number(bg.categories[k]||0);
           OVS.budCats[st.code][k]=(OVS.budCats[st.code][k]||0)+v; }); }
+      /* cumulative category snapshot through THIS day (for the day-in-view budget bar) */
+      { OVS.budCats5[st.code]=OVS.budCats5[st.code]||{}; const snap={};
+        Object.keys(OVS.budCats[st.code]||{}).forEach(k=>snap[k]=OVS.budCats[st.code][k]);
+        OVS.budCats5[st.code][dy]=snap; }
       /* till lines for cashier variance */
       if(de)(de.tills||[]).forEach(t=>{
         const cashVar=(t.variance!=null&&t.variance!=="")?ovN(t.variance):(t.result==="Short"?-ovN(t.amount):t.result==="Over"?ovN(t.amount):0);
@@ -4534,9 +4538,9 @@ function ovClusterScore(){
   }).sort((a,b)=>b.avg-a.avg||a.mgr.localeCompare(b.mgr));
   const soCell=(sg,n)=>{ const p=n?Math.round(sg/n*100):0;
     return ovPctBadge(p)+' <small style="color:#6b7280;font-weight:700">'+sg+'/'+n+'</small>'; };
-  /* budget spent per store: latest filed day's cumulative to-date vs allocation */
+  /* budget spent per store: cumulative through the DAY IN VIEW vs allocation */
   const budOf=code=>{ const b=OVS.budget5[code]||{}; let best=null;
-    for(let d2=1;d2<=5;d2++){ if(b[d2]&&(b[d2].alloc||b[d2].toDate)) best=b[d2]; }
+    for(let d2=1;d2<=dy;d2++){ if(b[d2]&&(b[d2].alloc||b[d2].toDate)) best=b[d2]; }
     return best?{alloc:ovN(best.alloc),spent:ovN(best.toDate)}:{alloc:0,spent:0}; };
   const budCell=codes=>{ let al=0,sp=0; codes.forEach(c=>{ const b=budOf(c); al+=b.alloc; sp+=b.spent; });
     if(!al&&!sp) return '<span style="color:#9aa3af">—</span>';
@@ -4566,16 +4570,60 @@ function ovClusterScore(){
 }
 function ovMatrix(k){ OVMATKEY=k; OVMOD="matrix"; ovRender(); }
 function ovModuleBars(){
-  const stores=ovTableStores(), dy=OVS.day;
+  const stores=ovTableStores(), dy=OVS.day, N=stores.length;
+  /* budget: CUMULATIVE spend up to the day in view vs total allocation */
+  let bAl=0,bSp=0; stores.forEach(s=>{ const b=OVS.budget5[s.code]||{}; let best=null;
+    for(let d2=1;d2<=dy;d2++){ if(b[d2]&&(b[d2].alloc||b[d2].toDate)) best=b[d2]; }
+    if(best){ bAl+=ovN(best.alloc); bSp+=ovN(best.toDate); } });
+  const bPct=bAl?Math.round(bSp/bAl*100):null;
+  const bCol=bPct===null?"#6b7280":bPct>90?"#B3261E":bPct>75?"#8A5A00":"#1B6B4A";
+  /* pick-up split for the day in view */
+  let pkBoth=0,pkFirst=0,pkVault=0; stores.forEach(s=>{ const p=(OVS.picks5[s.code]||{})[dy];
+    if(!p)return; if(p.status==="both")pkBoth++; else if(p.status==="first")pkFirst++; else if(p.status==="vault")pkVault++; });
+  const seg=(w,c)=>w>0?'<div style="width:'+(w/N*100)+'%;background:'+c+';height:13px"></div>':'';
   return '<div class="card"><div class="card-body">'+OV_MODS.map(m=>{
     const k=m[0]; const n=stores.filter(s=>((((OVS.filed5[s.code]||{})[dy])||[]).indexOf(k)>-1)).length;
-    const p=stores.length?Math.round(n/stores.length*100):0;
+    const p=N?Math.round(n/N*100):0;
     const due=(k!=="deposit")||ovDepositDue(dy);
     const col=sevC(p).solid;
+    if(k==="picks"){
+      const parts=[]; if(pkBoth)parts.push('<span style="color:#1B6B4A;font-weight:700">'+pkBoth+' both</span>');
+      if(pkFirst)parts.push('<span style="color:#8A5A00;font-weight:700">'+pkFirst+' first only</span>');
+      if(pkVault)parts.push('<span style="color:#B3261E;font-weight:700">'+pkVault+' vault held</span>');
+      return '<div style="cursor:pointer;margin:7px 0" onclick="ovMatrix(\'picks\')">'
+        +'<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 8px;font-size:12.5px;margin-bottom:3px"><span style="font-weight:600">'+esc(m[1])+'</span><span style="color:#4b5563;font-weight:700">'+n+'/'+N+(parts.length?' · ':'')+parts.join(' · ')+'</span></div>'
+        +'<div style="background:#eef0f4;border-radius:5px;height:13px;display:flex;overflow:hidden">'+seg(pkBoth,"#1B6B4A")+seg(pkFirst,"#BA7517")+seg(pkVault,"#B3261E")+'</div>'
+        +'<div style="font-size:11px;color:#6b7280;margin-top:2px"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#1B6B4A;vertical-align:-1px"></span> both pick-ups done &nbsp;<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#BA7517;vertical-align:-1px"></span> 1st only — 2nd pending &nbsp;<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#B3261E;vertical-align:-1px"></span> vault not available — cash held</div></div>';
+    }
+    if(k==="budget"&&(bAl||bSp)){
+      /* category-segmented budget bar: full width = total allocation, K amounts */
+      const kf=v=>fmt(Math.round(v/1000))+"K";
+      const CATCOL=["#534AB7","#0F6E56","#D85A30","#185FA5","#D4537E","#854F0B","#3C3489","#04342C"];
+      const cats={}; stores.forEach(s=>{ const cc=OVS.budCats5[s.code]||{}; let snap=null;
+        for(let d2=1;d2<=dy;d2++){ if(cc[d2]) snap=cc[d2]; }
+        if(snap) Object.keys(snap).forEach(x=>cats[x]=(cats[x]||0)+snap[x]); });
+      const keys=Object.keys(cats).filter(x=>cats[x]>0).sort((a,b2)=>cats[b2]-cats[a]);
+      const segs=keys.map((x,i)=>'<div style="width:'+(bAl?(cats[x]/bAl*100):(cats[x]/(bSp||1)*100))+'%;background:'+CATCOL[i%CATCOL.length]+';height:13px"></div>').join("");
+      const leg=keys.map((x,i)=>'<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:'+CATCOL[i%CATCOL.length]+';vertical-align:-1px"></span> '+esc(x)+' <b>'+kf(cats[x])+(bAl?' · '+Math.round(cats[x]/bAl*100)+'%':'')+'</b>').join(" &nbsp;")
+        +(bAl&&bAl>bSp?' &nbsp;<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#eef0f4;border:1px solid #c9d6ee;vertical-align:-1px"></span> unspent <b>'+kf(bAl-bSp)+' · '+(100-(bPct||0))+'%</b>':'');
+      return '<div style="cursor:pointer;margin:7px 0" onclick="ovMatrix(\'budget\')">'
+        +'<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 8px;font-size:12.5px;margin-bottom:3px"><span style="font-weight:600">'+esc(m[1])+'</span><span style="color:#4b5563;font-weight:700">'+n+'/'+N+' · spent '+kf(bSp)+(bAl?' of '+kf(bAl):'')+(bPct===null?'':' · <span style="color:'+bCol+'">'+bPct+'%</span>')+'</span></div>'
+        +'<div style="background:#eef0f4;border-radius:5px;height:13px;display:flex;overflow:hidden">'+segs+'</div>'
+        +(keys.length?'<div style="font-size:11px;color:#6b7280;margin-top:2px;line-height:1.8">'+leg+'</div>':'')+'</div>';
+    }
     return '<div style="cursor:pointer;margin:7px 0" onclick="ovMatrix(\''+k+'\')">'
-      +'<div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span style="font-weight:600">'+esc(m[1])+(due?'':' <small style="color:#8A5A00">· due tomorrow morning</small>')+'</span><span style="color:#4b5563;font-weight:700">'+n+'/'+stores.length+'</span></div>'
+      +'<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 8px;font-size:12.5px;margin-bottom:3px"><span style="font-weight:600">'+esc(m[1])+(due?'':' <small style="color:#8A5A00">· due tomorrow morning</small>')+'</span><span style="color:#4b5563;font-weight:700">'+n+'/'+N+'</span></div>'
       +'<div style="background:#eef0f4;border-radius:5px;height:13px"><div style="width:'+p+'%;background:'+(due?col:'#9aa3af')+';height:13px;border-radius:5px"></div></div></div>';
-  }).join("")+'</div></div>';
+  }).join("")
+  +(function(){ const tm=OVS.tomorrow; if(!tm||tm>5) return "";
+    let filed=0; stores.forEach(s=>{ if((OVS.prep5[s.code]||{})[tm]) filed++; });
+    const miss=N-filed;
+    return '<div style="border-top:1px dashed #c9d6ee;margin:10px 0 3px"></div>'
+      +'<div style="cursor:pointer;margin:7px 0" onclick="ovSetPrepDay('+tm+');ovSetMod(\'prep\')">'
+      +'<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 8px;font-size:12.5px;margin-bottom:3px"><span style="font-weight:600">🌙 Next day preparation — Day '+tm+'</span><span style="color:#4b5563;font-weight:700">'+filed+'/'+N+' filed'+(miss?' · <span style="color:#B3261E">'+miss+' not filed</span>':'')+'</span></div>'
+      +'<div style="background:#eef0f4;border-radius:5px;height:13px"><div style="width:'+(N?Math.round(filed/N*100):0)+'%;background:#534AB7;height:13px;border-radius:5px"></div></div>'
+      +'<div style="font-size:11px;color:#6b7280;margin-top:2px">counts toward tomorrow — separate so it never distorts today\'s bars · tap to review</div></div>'; })()
+  +'</div></div>';
 }
 function ovModMatrix(){
   const m=OV_MODS.find(x=>x[0]===OVMATKEY)||[OVMATKEY,OVMATKEY];
