@@ -3186,11 +3186,12 @@ async function ovFetch(){
   }
   throw lastErr;
 }
-const OV_INC_META={theft:{lab:"Theft",prio:1},lost:{lab:"Lost & found"},fight:{lab:"Fight",prio:1},
+const OV_INC_META={theft:{lab:"Theft",prio:1},stocktheft:{lab:"Stock theft (store merchandise)",prio:1},lost:{lab:"Lost & found"},fight:{lab:"Fight",prio:1},
  power:{lab:"Electricity outage",out:1},gen:{lab:"Generator out of service",out:1},lift:{lab:"Lift out of service",out:1},
  cctv:{lab:"CCTV / security system fault",out:1},diesel:{lab:"Diesel issue"},charge:{lab:"Charge extra"},
  injury:{lab:"Customer injury / accident",prio:1},other:{lab:"Any other incident"}};
 const OV_INC_FIELDS={custName:"Customer",custContact:"Contact",items:"Item details",dealingMgr:"Dealing manager",
+ estValue:"Estimated value (PKR)",discovered:"How discovered",suspect:"Suspect details",police:"Reported to police",
  entryTime:"Store entry time",reportTime:"Report time",foundBy:"Who found it",handedTo:"Handed over to",
  summary:"Summary",where:"Where",involved:"Who was involved",outcome:"Outcome",from:"Out of service from",
  till:"Back on at",reportedHO:"Reported to head office?",details:"Details",person:"Person injured"};
@@ -3461,6 +3462,8 @@ function ovModule(code,key){
       +(rec.ho&&rec.ho.length?'<div class="ov-l"><b>Head office</b></div>'+rec.ho.map(line).join(""):"");
     return {sum:ppl.length+" on site ("+(rec.it||[]).length+" IT · "+(rec.ho||[]).length+" HO)", exc, detail}; }
   if(key==="performance"){ const ppl=rec.people||[], exc=[];
+    if(!ppl.length) return {sum: rec.noStaff==="Yes" ? "No wagers or guards this day — nothing to rate (store confirmed)" : "0 rated",
+      exc:[], detail:'<div class="ov-l">'+esc(rec.note||"No people were listed on this rating record.")+'</div>'};
     ppl.forEach(p=>{ const vals=Object.values(p.scores||{}).filter(x=>x!=null); if(vals.length && Math.min.apply(null,vals)<=2) exc.push((p.module==="guard"?"Guard ":"Wager ")+esc(p.name)+": "+ovWordScore(p.scores)+(p.remark?" — "+p.remark:"")); });
     const detail=ppl.map(p=>'<div class="ov-l">'+esc(p.name)+' · '+(p.module==="guard"?"Guard":"Wager")+' · <b>'+ovWordScore(p.scores)+'</b>'+(p.remark?" · "+esc(p.remark):"")+'</div>').join("");
     return {sum:ppl.length+" rated", exc, detail}; }
@@ -3625,10 +3628,14 @@ function ovSignCard(code,st,can){
     const note2=(!has&&!req)?' <small style="color:#8A5A00">— due tomorrow morning · does not block</small>':'';
     return '<div style="display:flex;gap:8px;font-size:13px;padding:2.5px 0"><span style="color:'+clr+';font-weight:800;width:14px">'+mark+'</span><span>'+esc(m[1])+note2+'</span></div>';
   }).join("")+'</div>';
+  /* PICK-UPS ONLY: a missing pick-up does not dead-block — the manager must
+     close it with his own remark (dropdown) before he can sign. */
+  const pkMissing=missingReq.indexOf("picks")>-1;
+  const missingOther=missingReq.filter(k=>k!=="picks");
   let blk="";
   if((rec.amendments||[]).length) blk="Clear the money changes above before signing off.";
-  else if(missingReq.length){ const names=missingReq.map(k=>(OV_MODS.find(m=>m[0]===k)||[])[1]||k);
-    blk="Cannot sign off yet — "+missingReq.length+" required item"+(missingReq.length>1?"s":"")+" missing: "+names.join(", ")+"."; }
+  else if(missingOther.length){ const names=missingOther.map(k=>(OV_MODS.find(m=>m[0]===k)||[])[1]||k);
+    blk="Cannot sign off yet — "+missingOther.length+" required item"+(missingOther.length>1?"s":"")+" missing: "+names.join(", ")+"."; }
   if(!can) return '<div class="card"><div class="card-head"><h3>Required for sign-off</h3><span class="hint">'+(OV_MODS.length-((!depDue)?1:0)-missingReq.length)+' of '+(OV_MODS.length-((!depDue)?1:0))+' done</span></div><div class="card-body">'+checklistRO+'<div class="ov-blk">Sign-off is done by cluster manager '+esc(s.region)+'.</div></div></div>';
   const canSign=!blk; // exceptions warn but never block; missing REQUIRED modules block
   /* MODULE-WISE sign-off: a tick box against every filed module — all must be
@@ -3640,6 +3647,16 @@ function ovSignCard(code,st,can){
       +'<input type="checkbox" class="ovModTick" data-k="'+k+'" data-lab="'+esc(m[1])+'" '+(canSign?"":"disabled")+' onchange="ovWireSign()">'
       +'<span><b>'+esc(m[1])+'</b> — reviewed &amp; correct</span></label>';
     if(!req) return '<div style="display:flex;gap:8px;font-size:13px;padding:2.5px 0"><span style="color:#8A5A00;font-weight:800;width:14px">◦</span><span>'+esc(m[1])+' <small style="color:#8A5A00">— due tomorrow morning · does not block</small></span></div>';
+    if(k==="picks"&&canSign) return '<div style="background:#FBEAE9;border:1.5px solid #e5b8b5;border-radius:9px;padding:9px 12px;margin:4px 0 6px">'
+      +'<div style="font-weight:800;font-size:13px;color:#7f1d1d">✗ Cash pick-up NOT executed — close it with your remark to sign off</div>'
+      +'<select id="ovPkNoRem" style="width:100%;margin-top:7px" onchange="ovWireSign()">'
+      +'<option value="">Select your remark…</option>'
+      +'<option value="No pickup: CIT no-show">CIT / Phoenix did not arrive</option>'
+      +'<option value="No pickup: not arranged">Store did not arrange the pick-up</option>'
+      +'<option value="No pickup: low cash">Cash below pick-up threshold</option>'
+      +'<option value="No pickup: cash in safe">Verified — cash secured in safe overnight</option>'
+      +'<option value="No pickup: other-discussed">Other — discussed with store, acceptable</option>'
+      +'</select></div>';
     return '<div style="display:flex;gap:8px;font-size:13px;padding:2.5px 0"><span style="color:#B3261E;font-weight:800;width:14px">✗</span><span>'+esc(m[1])+' <small style="color:#B3261E">— not filed yet</small></span></div>';
   }).join("")+'</div>';
   return '<div class="card"><div class="card-head"><h3>'+(OVROLE==="hq"?"Head office":"Cluster")+' sign-off — module by module</h3><span class="hint">tick every module, then lock the day</span></div><div class="card-body">'
@@ -3652,8 +3669,10 @@ function ovSignCard(code,st,can){
 function ovWireSign(){ const b=$("ovSignBtn"); if(!b) return;
   const ticks=[...document.querySelectorAll(".ovModTick")];
   const left=ticks.filter(t=>!t.checked).length;
-  b.disabled=!(ticks.length&&left===0&&!ticks[0].disabled);
-  const h=$("ovSignHint"); if(h) h.textContent = left===0?"All modules ticked — you can sign off.":(left+" module"+(left>1?"s":"")+" still to review & tick.");
+  const remEl=document.getElementById("ovPkNoRem");
+  const remOk=!remEl||!!remEl.value;
+  b.disabled=!(ticks.length&&left===0&&!ticks[0].disabled&&remOk);
+  const h=$("ovSignHint"); if(h) h.textContent = left>0?(left+" module"+(left>1?"s":"")+" still to review & tick."):(remOk?"All modules ticked — you can sign off.":"Select your remark on the missing pick-up to enable sign-off.");
 }
 async function ovDecide(code,i,decision){
   const rec=OVS.data[code]; if(!rec||!rec.amendments[i])return;
@@ -3677,11 +3696,16 @@ async function ovSignoff(code){
   const ticks=[...document.querySelectorAll(".ovModTick")];
   const left=ticks.filter(t=>!t.checked);
   if(!ticks.length||left.length){ toast("Tick every module to confirm you reviewed each one."); return; }
-  /* re-check the requirement rule — every REQUIRED module must actually be filed */
+  /* re-check the requirement rule — every REQUIRED module must actually be filed;
+     the ONE exception is a missing pick-up CLOSED by the manager's dropdown remark */
   const filedNow=((OVS.filed5[code]||{})[OVS.day])||[];
   const missingNow=OV_MODS.map(m=>m[0]).filter(k=>((k!=="deposit")||ovDepositDue(OVS.day)) && filedNow.indexOf(k)<0);
-  if(missingNow.length){ toast("Cannot sign off — required modules are still missing."); return; }
+  const remEl=document.getElementById("ovPkNoRem");
+  const pkClosed=missingNow.indexOf("picks")>-1 && remEl && remEl.value;
+  const stillMissing=missingNow.filter(k=>!(k==="picks"&&pkClosed));
+  if(stillMissing.length){ toast(stillMissing.indexOf("picks")>-1?"Select your remark on the missing pick-up first — it must be closed with your words.":"Cannot sign off — required modules are still missing."); return; }
   const mods=ticks.map(t=>t.getAttribute("data-lab"));
+  if(pkClosed) mods.push(remEl.value); /* ≤30 chars — stored intact in the Sheet */
   const rec=OVS.data[code]; if((rec.amendments||[]).length){ toast("Clear the money changes first."); return; }
   try{
     const res=await fetch(CONFIG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
