@@ -3759,7 +3759,11 @@ function aggTill(rec){
     cardShort:cardShort,cardOver:cardOver,net:(cashOver-cashShort)+(cardOver-cardShort),
     cardSysMissing:cardSysMissing,cashSysMissing:cashSysMissing,
     fakes:(rec.fakeNotes||[]).length}; }
-function aggDep(rec){ return {sys:ovN(rec.cashInSystem),dep:ovN(rec.cashDeposited),varc:ovN(rec.variance),reason:rec.varianceReason||""}; }
+function aggDep(rec){ const sys=ovN(rec.cashInSystem), dep=ovN(rec.cashDeposited);
+  const varc=dep-sys;                       /* COMPUTED — never trust the typed figure */
+  const claim=ovN(rec.variance);            /* what the store typed */
+  const mism=Math.abs(varc-claim)>1;        /* store claimed something else (often "matches") */
+  return {sys:sys,dep:dep,varc:varc,claim:claim,mism:mism,reason:rec.varianceReason||""}; }
 function aggBud(rec){ return {alloc:ovN(rec.allocated),spent:ovN(rec.spentToDate),rem:ovN(rec.remaining)}; }
 function aggRate(rec){ let low=0,names=[]; (rec.people||[]).forEach(p=>{ const v=Object.values(p.scores||{}).filter(x=>x!=null); if(v.length&&Math.min.apply(null,v)<=2){low++;names.push(p.name);} }); return {people:(rec.people||[]).length,low,names}; }
 
@@ -3805,7 +3809,9 @@ function ovTable(mod){
   else if(mod==="deposit"){ head=["Store","Region","In system","Deposited","Variance","Reason","Updated"];
     rowsFor((rec,s)=>{ if(!rec) return [{v:"—",cls:"muted"},{v:"",cls:""},{v:"",cls:""},{v:"",cls:""},frCell(null)];
         const a=aggDep(rec);
-        return [ cell(pkr(a.sys)), cell(pkr(a.dep)), cell((a.varc?pkr(a.varc):"matches"),a.varc!==0), {v:esc(a.reason||(a.varc?"—":"")),cls:a.varc&&!a.reason?"cell-bad":"muted"}, frCell((OVS.data[s.code]._meta||{}).deposit) ]; },
+        const flag=a.mism?' <b style="color:#B3261E">⚑ store claimed '+(a.claim?pkr(a.claim):"matches")+' — verify slip</b>':'';
+        return [ cell(pkr(a.sys)), cell(pkr(a.dep)), cell((a.varc?pkr(a.varc):"matches"),a.varc!==0),
+                 {v:esc(a.reason||(a.varc?"—":""))+flag,cls:(a.varc&&!a.reason)||a.mism?"cell-bad":"muted"}, frCell((OVS.data[s.code]._meta||{}).deposit) ]; },
       {sys:0,dep:0,varc:0}, (rec)=>{const a=aggDep(rec);tot.sys+=a.sys;tot.dep+=a.dep;tot.varc+=a.varc;},
       ()=>[cell(pkr(tot.sys)),cell(pkr(tot.dep)),cell(tot.varc?pkr(tot.varc):"matches",tot.varc!==0),{v:"",cls:""},{v:"",cls:""}]); }
 
