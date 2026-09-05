@@ -3641,16 +3641,21 @@ function ovSignCard(code,st,can){
   const dy=OVS.day, filed=((OVS.filed5[code]||{})[dy])||[], depDue=ovDepositDue(dy);
   const missingReq=OV_MODS.map(m=>m[0]).filter(k=>((k!=="deposit")||depDue) && filed.indexOf(k)<0);
   /* view-only checklist (no ticks) for people who cannot act */
+  const wkndRO=ovBankClosed(dy);
   const checklistRO='<div style="margin:0 0 10px">'+OV_MODS.map(m=>{
-    const k=m[0], has=filed.indexOf(k)>-1, req=(k!=="deposit")||depDue;
+    const k=m[0], has=filed.indexOf(k)>-1;
+    const req=((k!=="deposit")||depDue) && !(k==="deposit"&&wkndRO);
     const mark=has?"✓":(req?"✗":"◦"), clr=has?"#1B6B4A":(req?"#B3261E":"#8A5A00");
-    const note2=(!has&&!req)?' <small style="color:#8A5A00">— due tomorrow morning · does not block</small>':'';
+    const note2=(!has&&!req)?((k==="deposit"&&wkndRO&&depDue)?' <small style="color:#8A5A00">— bank closed (weekend) · due Monday</small>':' <small style="color:#8A5A00">— due tomorrow morning · does not block</small>'):'';
     return '<div style="display:flex;gap:8px;font-size:13px;padding:2.5px 0"><span style="color:'+clr+';font-weight:800;width:14px">'+mark+'</span><span>'+esc(m[1])+note2+'</span></div>';
   }).join("")+'</div>';
   /* PICK-UPS ONLY: a missing pick-up does not dead-block — the manager must
      close it with his own remark (dropdown) before he can sign. */
   const pkMissing=missingReq.indexOf("picks")>-1;
-  const missingOther=missingReq.filter(k=>k!=="picks");
+  /* WEEKEND ONLY: a due-but-unbankable deposit (bank closed Sat/Sun) is closable
+     with the manager's remark — the same closure pattern as the pick-up. */
+  const depWknd=missingReq.indexOf("deposit")>-1 && ovBankClosed(dy);
+  const missingOther=missingReq.filter(k=>k!=="picks" && !(k==="deposit"&&depWknd));
   let blk="";
   if((rec.amendments||[]).length) blk="Clear the money changes above before signing off.";
   else if(missingOther.length){ const names=missingOther.map(k=>(OV_MODS.find(m=>m[0]===k)||[])[1]||k);
@@ -3666,6 +3671,16 @@ function ovSignCard(code,st,can){
       +'<input type="checkbox" class="ovModTick" data-k="'+k+'" data-lab="'+esc(m[1])+'" '+(canSign?"":"disabled")+' onchange="ovWireSign()">'
       +'<span><b>'+esc(m[1])+'</b> — reviewed &amp; correct</span></label>';
     if(!req) return '<div style="display:flex;gap:8px;font-size:13px;padding:2.5px 0"><span style="color:#8A5A00;font-weight:800;width:14px">◦</span><span>'+esc(m[1])+' <small style="color:#8A5A00">— due tomorrow morning · does not block</small></span></div>';
+    if(k==="deposit"&&depWknd&&canSign) return '<div style="background:#FDF3E2;border:1.5px solid #e8cf9a;border-radius:9px;padding:9px 12px;margin:4px 0 6px">'
+      +'<div style="font-weight:800;font-size:13px;color:#8A5A00">🏦 Deposit not banked — bank closed this weekend. Close it with your remark to sign off.</div>'
+      +'<div style="font-size:12px;color:#8A5A00;margin-top:3px">The store must still bank this day separately on <b>Monday</b> and file it — the filing lands even after your sign-off.</div>'
+      +'<select id="ovDepNoRem" style="width:100%;margin-top:7px" onchange="ovWireSign()">'
+      +'<option value="">Select your remark…</option>'
+      +'<option value="No deposit: bank closed wknd">Bank closed (weekend) — banking Monday</option>'
+      +'<option value="Cash in vault till Monday">Verified — cash secured in vault till Monday</option>'
+      +'<option value="No deposit: other-discussed">Other — discussed with store, acceptable</option>'
+      +'</select></div>';
+    if(k==="deposit"&&depWknd) return '<div style="display:flex;gap:8px;font-size:13px;padding:2.5px 0"><span style="color:#8A5A00;font-weight:800;width:14px">◦</span><span>'+esc(m[1])+' <small style="color:#8A5A00">— bank closed (weekend) · due Monday</small></span></div>';
     if(k==="picks"&&canSign) return '<div style="background:#FBEAE9;border:1.5px solid #e5b8b5;border-radius:9px;padding:9px 12px;margin:4px 0 6px">'
       +'<div style="font-weight:800;font-size:13px;color:#7f1d1d">✗ Cash pick-up NOT executed — close it with your remark to sign off</div>'
       +'<select id="ovPkNoRem" style="width:100%;margin-top:7px" onchange="ovWireSign()">'
@@ -3690,8 +3705,10 @@ function ovWireSign(){ const b=$("ovSignBtn"); if(!b) return;
   const left=ticks.filter(t=>!t.checked).length;
   const remEl=document.getElementById("ovPkNoRem");
   const remOk=!remEl||!!remEl.value;
-  b.disabled=!(ticks.length&&left===0&&!ticks[0].disabled&&remOk);
-  const h=$("ovSignHint"); if(h) h.textContent = left>0?(left+" module"+(left>1?"s":"")+" still to review & tick."):(remOk?"All modules ticked — you can sign off.":"Select your remark on the missing pick-up to enable sign-off.");
+  const depEl=document.getElementById("ovDepNoRem");
+  const depOk=!depEl||!!depEl.value;
+  b.disabled=!(ticks.length&&left===0&&!ticks[0].disabled&&remOk&&depOk);
+  const h=$("ovSignHint"); if(h) h.textContent = left>0?(left+" module"+(left>1?"s":"")+" still to review & tick."):(!remOk?"Select your remark on the missing pick-up to enable sign-off.":(!depOk?"Select your remark on the weekend deposit to enable sign-off.":"All modules ticked — you can sign off."));
 }
 async function ovDecide(code,i,decision){
   const rec=OVS.data[code]; if(!rec||!rec.amendments[i])return;
@@ -3721,10 +3738,13 @@ async function ovSignoff(code){
   const missingNow=OV_MODS.map(m=>m[0]).filter(k=>((k!=="deposit")||ovDepositDue(OVS.day)) && filedNow.indexOf(k)<0);
   const remEl=document.getElementById("ovPkNoRem");
   const pkClosed=missingNow.indexOf("picks")>-1 && remEl && remEl.value;
-  const stillMissing=missingNow.filter(k=>!(k==="picks"&&pkClosed));
-  if(stillMissing.length){ toast(stillMissing.indexOf("picks")>-1?"Select your remark on the missing pick-up first — it must be closed with your words.":"Cannot sign off — required modules are still missing."); return; }
+  const depEl=document.getElementById("ovDepNoRem");
+  const depClosed=missingNow.indexOf("deposit")>-1 && ovBankClosed(OVS.day) && depEl && depEl.value;
+  const stillMissing=missingNow.filter(k=>!(k==="picks"&&pkClosed)&&!(k==="deposit"&&depClosed));
+  if(stillMissing.length){ toast(stillMissing.indexOf("picks")>-1?"Select your remark on the missing pick-up first — it must be closed with your words.":(stillMissing.indexOf("deposit")>-1&&ovBankClosed(OVS.day))?"Select your remark on the weekend deposit first.":"Cannot sign off — required modules are still missing."); return; }
   const mods=ticks.map(t=>t.getAttribute("data-lab"));
   if(pkClosed) mods.push(remEl.value); /* ≤30 chars — stored intact in the Sheet */
+  if(depClosed) mods.push(depEl.value); /* weekend deposit closure — proof in ModulesJSON */
   const rec=OVS.data[code]; if((rec.amendments||[]).length){ toast("Clear the money changes first."); return; }
   try{
     const res=await fetch(CONFIG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
@@ -4450,6 +4470,15 @@ function ovPrepCsv(){
 /* ============ HO v2: compliance % engine + single-page national dashboard ============ */
 function ovDepositDue(dy){ const ev=CONFIG.EVENTS[0]||{days:[]}; const d=(ev.days||[]).find(x=>String(x.day)===String(dy));
   return !!(d&&d.date&&OVS.businessDate&&d.date<OVS.businessDate); }   /* deposit is due the NEXT morning */
+/* bank-holiday rule: this day's deposit due-date (the morning after) is a Sat/Sun,
+   so the cash physically cannot be banked before Monday */
+function ovBankClosed(dy){ const ev=CONFIG.EVENTS[0]||{days:[]}; const d=(ev.days||[]).find(x=>String(x.day)===String(dy));
+  if(!d||!d.date) return false;
+  const due=new Date(d.date+"T12:00:00"); due.setDate(due.getDate()+1);
+  const wd=due.getDay(); if(wd!==6&&wd!==0) return false;
+  /* only while Monday has not yet arrived — from Monday the hard block returns */
+  let nb=new Date(due); while(nb.getDay()===6||nb.getDay()===0) nb.setDate(nb.getDate()+1);
+  return !!(OVS.businessDate && OVS.businessDate < nb.toISOString().slice(0,10)); }
 function ovReqMods(dy){ return OV_MODS.map(m=>m[0]).filter(k=>k!=="deposit"||ovDepositDue(dy)); }
 function ovCompliance(code,dy){
   const filed=((OVS.filed5[code]||{})[dy])||[]; const req=ovReqMods(dy);
