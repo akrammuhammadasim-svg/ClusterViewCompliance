@@ -4970,9 +4970,13 @@ function ovPickCsv(){ const rows=[["Store","Region","Day","1st pick-up","2nd pic
   downloadCsv("pickup-report.csv",rows); }
 
 /* ---- Cashier-wise shortage & excess (across stores/days) ---- */
+/* payroll number is UNIQUE — key every cashier by payroll (name spellings vary:
+   "Aliza"/"Aleeza" on 17799 are one person). Name is display-only, first seen. */
+function ovCashKey(l){ const pr=String(l.payroll||"").trim().toUpperCase();
+  return pr?("P:"+pr):("N:"+String(l.cashier||"?").trim().toLowerCase()); }
 function ovCashierAgg(){
   const m={}; (OVS.tillLines||[]).forEach(l=>{ if(OVREGFILTER && l.region!==OVREGFILTER) return; if(OVROLE==="cluster" && l.region!==OVREGION) return;
-    const k=l.cashier+"|"+l.payroll; if(!m[k]) m[k]={cashier:l.cashier,payroll:l.payroll,cs:0,co:0,ks:0,ko:0,inc:0,stores:new Set()};
+    const k=ovCashKey(l); if(!m[k]) m[k]={cashier:l.cashier,payroll:l.payroll,cs:0,co:0,ks:0,ko:0,inc:0,stores:new Set()};
     const cashErr=l.result==="Short"||l.result==="Over", cardErr=l.cardResult==="Short"||l.cardResult==="Over";
     if(l.cashVar<0) m[k].cs+=-l.cashVar; else if(l.cashVar>0) m[k].co+=l.cashVar;
     if(l.cardVar<0) m[k].ks+=-l.cardVar; else if(l.cardVar>0) m[k].ko+=l.cardVar;
@@ -4986,9 +4990,14 @@ function ovCshStore(i){ const n=OVCSHNAMES[i]; OVCSHST=(OVCSHST===n)?null:n; ovR
 function ovCshAll(i){ const n=OVCSHNAMES[i]; OVCSHALL[n]=!OVCSHALL[n]; ovRender(); }
 function ovCashierStoreAgg(){
   const m={}; (OVS.tillLines||[]).forEach(l=>{ if(OVREGFILTER && l.region!==OVREGFILTER) return; if(OVROLE==="cluster" && l.region!==OVREGION) return;
-    if(!m[l.store]) m[l.store]={store:l.store,region:l.region,lines:0,inc:0,cs:0,co:0,ks:0,ko:0,cashiers:{}};
-    const S=m[l.store]; const k=(l.payroll||"?")+"|"+(l.cashier||"?");
-    if(!S.cashiers[k]) S.cashiers[k]={payroll:l.payroll,cashier:l.cashier,lines:0,inc:0,cs:0,co:0,ks:0,ko:0};
+    if(!m[l.store]) m[l.store]={store:l.store,region:l.region,lines:0,inc:0,cs:0,co:0,ks:0,ko:0,cashiers:{},dayCard:{}};
+    const S=m[l.store]; const k=ovCashKey(l);
+    if(!S.cashiers[k]) S.cashiers[k]={payroll:l.payroll,cashier:l.cashier,lines:0,inc:0,cs:0,co:0,ks:0,ko:0,cdays:{}};
+    /* per-day card legs — the wrong-till offset must pair SAME STORE + SAME DAY only
+       (merchant terminals settle within the store; cross-day pairing would be false) */
+    const DC=S.dayCard[l.day]=S.dayCard[l.day]||{ks:0,ko:0};
+    if(l.cardVar<0) DC.ks+=-l.cardVar; else if(l.cardVar>0) DC.ko+=l.cardVar;
+    if(l.cardVar) S.cashiers[k].cdays[l.day]=1;
     [S,S.cashiers[k]].forEach(o=>{ o.lines++;
       if(l.cashVar<0) o.cs+=-l.cashVar; else if(l.cashVar>0) o.co+=l.cashVar;
       if(l.cardVar<0) o.ks+=-l.cardVar; else if(l.cardVar>0) o.ko+=l.cardVar;
@@ -4996,7 +5005,17 @@ function ovCashierStoreAgg(){
   });
   const out=Object.values(m);
   out.forEach(S=>{ S.net=(S.co-S.cs)+(S.ko-S.ks); S.gross=S.cs+S.co+S.ks+S.ko;
-    S.clist=Object.values(S.cashiers); S.clist.forEach(c=>{ c.net=(c.co-c.cs)+(c.ko-c.ks); c.gross=c.cs+c.co+c.ks+c.ko; c.zeroButErrs=(c.net===0&&c.gross>0); });
+    /* in-store SAME-DAY card offset: card short at one till mirrored by card excess at
+       another till on the SAME day = wrong-till allocation / merchant terminal not
+       closed against the correct till. Day-wise so a D1 short never pairs with a D3 excess. */
+    S.cardOffset=0; const flagDays={};
+    Object.keys(S.dayCard||{}).forEach(dk=>{ const dd=S.dayCard[dk], o=Math.min(dd.ks,dd.ko); S.cardOffset+=o; if(o>0) flagDays[dk]=1; });
+    S.tillMix=(S.cardOffset>1000);
+    S.clist=Object.values(S.cashiers); S.clist.forEach(c=>{ c.net=(c.co-c.cs)+(c.ko-c.ks); c.gross=c.cs+c.co+c.ks+c.ko; c.zeroButErrs=(c.net===0&&c.gross>0); if(S.tillMix&&Object.keys(c.cdays||{}).some(dk=>flagDays[dk])) c.tillMix=true; });
+    /* ⚠ same name under two different payroll numbers — likely a payroll typo;
+       cannot be auto-merged (different numbers), so flag for manual check */
+    const byName={}; S.clist.forEach(c=>{ const n=String(c.cashier||"").trim().toLowerCase(); if(n){(byName[n]=byName[n]||[]).push(c);} });
+    Object.keys(byName).forEach(n=>{ if(byName[n].length>1) byName[n].forEach(c=>{ c.dupName=true; }); });
     S.clist.sort((a,b)=>(b.gross-a.gross)||(a.net-b.net)); });
   return out.sort((a,b)=>(b.cs-a.cs)||(b.gross-a.gross)); }  /* worst cash short first, balanced last */
 function ovCashierReport(){
@@ -5015,9 +5034,12 @@ function ovCashierReport(){
       +'<td class="'+(S.ko>0?"cell-warn":"muted")+'">'+(S.ko>0?pkr(S.ko):"0")+'</td>'
       +(S.gross===0?'<td style="color:#1B6B4A;font-weight:800">balanced</td>':ovNetCellHtml(S.net))+'</tr>';
     if(open){ const showAll=!!OVCSHALL[S.store];
+      if(S.tillMix) trs+='<tr class="ov-sub"><td colspan="8" style="background:#FDF3E2;color:#8A5A00;font-size:12px;padding:8px 12px;white-space:normal">⚠ <b>'+pkr(S.cardOffset)+' of card shortages OFFSET card excesses at other tills on the SAME day in this store</b> — likely wrong-till allocation or a merchant terminal not closed against the correct till. Verify the terminal-wise settlement report and AMEND the day-ends before recovering. Real card exposure at store level: '+pkr(Math.abs(S.ko-S.ks))+'.</td></tr>';
       const vis=S.clist.filter(c=>showAll||c.gross>0), hid=S.clist.length-S.clist.filter(c=>c.gross>0).length;
       vis.forEach(c=>{ trs+='<tr class="ov-sub"'+(c.zeroButErrs?' style="background:#FDF3E2"':'')+'><td class="stk" style="padding-left:22px"><span style="font-family:monospace;font-size:11px">'+esc(c.payroll||"—")+'</span> '+esc(c.cashier||"—")
-          +(c.zeroButErrs?' <span class="ovh-b amber">⚠ settles to 0 — errors made</span>':'')+'</td>'
+          +(c.zeroButErrs?' <span class="ovh-b amber">⚠ settles to 0 — errors made</span>':'')
+          +(c.dupName?' <span class="ovh-b amber">⚠ same name, two payroll nos — verify</span>':'')
+          +(c.tillMix?' <span class="ovh-b amber">⇄ in-store card offset — verify terminal report</span>':'')+'</td>'
         +'<td>'+c.lines+'</td><td class="'+(c.inc?'cell-warn':'muted')+'">'+c.inc+'</td>'
         +'<td class="'+(c.cs>0?"cell-bad":"muted")+'">'+(c.cs>0?pkr(c.cs):"0")+'</td>'
         +'<td class="'+(c.co>0?"cell-warn":"muted")+'">'+(c.co>0?pkr(c.co):"0")+'</td>'
