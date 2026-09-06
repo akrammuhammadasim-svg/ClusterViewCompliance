@@ -4761,8 +4761,10 @@ function ovCloseout(){
   /* ---- ② people & incidents ---- */
   const shSum=D=>{ let a={dem:0,arr:0,late:0,early:0}; stores.forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=(D[s.code]||{})[dy]; if(f){a.dem+=f.dem||0;a.arr+=f.arr||0;a.late+=f.late||0;a.early+=f.early||0;} } }); return a; };
   const W=shSum(OVS.wager5), G=shSum(OVS.guard5);
-  let supV=0,supLate=0,supEarly=0,supMins=0,supNever=0;
-  stores.forEach(s=>{ let any=false; for(let dy=1;dy<=5;dy++){ const f=ovSupStat(s.code,dy); supV+=f.arr;supLate+=f.late;supEarly+=f.early;supMins+=f.mins; if(f.arr)any=true; } if(!any)supNever++; });
+  let supV=0,supLate=0,supEarly=0,supMins=0,supNever=0; const supNeverL=[], supLateL=[];
+  stores.forEach(s=>{ let any=false; for(let dy=1;dy<=5;dy++){ const f=ovSupStat(s.code,dy); supV+=f.arr;supLate+=f.late;supEarly+=f.early;supMins+=f.mins; if(f.arr)any=true;
+    (f.su.ppl||[]).forEach(v=>{ if(v.fl&&v.fl.length) supLateL.push({st:s.name,dy:dy,n:v.n,who:v.who,fl:v.fl.join(" + "),ai:v.ai}); });
+  } if(!any){supNever++; supNeverL.push(s.name);} });
   const inc=OVS.incidents||[]; const incStores={}; const incTypes={};
   inc.forEach(i=>{ incStores[i.code]=1; incTypes[i.lab||i.type]=(incTypes[i.lab||i.type]||0)+1; });
   const incSt=Object.keys(incStores).length;
@@ -4792,32 +4794,38 @@ function ovCloseout(){
   const dRow=(n,r)=> '<div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;border-bottom:1px dotted #e5e7eb"><span>'+esc(n)+'</span><b>'+r+'</b></div>';
   const detail=(id,title,rowsHtml)=> OVCOEXP===id?'<div class="card" style="margin:8px 0 0"><div class="card-body"><b style="font-size:12.5px">'+title+'</b><div style="margin-top:5px">'+(rowsHtml||'<span class="meta">None — all clear.</span>')+'</div></div></div>':'';
   const rd=v=>'<span style="color:#B3261E;font-weight:700">'+v+'</span>';
-  let h=sec('🌇 Event close-out — tap a card for store detail');
+  let h=sec('🌇 Event close-out — WHOLE EVENT · ALL 5 DAYS — tap a card for store detail');
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap">'
     +tile(postFiled<N?"rd":"gr",postFiled+' / '+N,'post-sale filed · due Tue 6 PM',"ovCoToggle('post')")
     +tile(depN?"am":"gr",depN+' · '+pkr(depAmt),'deposits pending (Monday)',"ovCoToggle('dep')")
     +tile(flN?"am":"gr",flN+' · '+pkr(flAmt),'float returns pending',"ovCoToggle('float')")
     +tile(amendN?"rd":"gr",String(amendN),'amendments pending approval',"ovSetMod('approvals')")
-    +tile(signPendDays?"am":"gr",signPendDays+' days','sign-off pending',"ovCoToggle('sign')")
+    +tile(signPendDays?"am":"gr",String(signPendDays),'sign-offs pending (one per store per day)',"ovCoToggle('sign')")
     +'</div>'
     +detail('post','Post-sale NOT filed — '+postPend.length+' store'+(postPend.length===1?'':'s'),postPend.map(n=>dRow(n,'pending')).join(""))
     +detail('dep','Deposits pending — banked Monday',depRows.map(r=>dRow(r.n+' · '+r.days,pkr(r.amt))).join(""))
     +detail('float','Float return pending',flRows.map(r=>dRow(r.n+(r.w?' · promised '+esc(r.w):''),r.amt?pkr(r.amt):'—')).join(""))
     +detail('sign','Sign-offs pending — by cluster manager',Object.keys(signByMgr).map(m=>dRow(m,signByMgr[m].join(" · "))).join(""));
-  h+=sec('📊 Event at a glance');
+  h+=sec('📊 Event at a glance — whole event');
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap">'
     +tile("bl",(W.dem?Math.round(W.arr/W.dem*100):0)+'%','wagers arrived ('+W.arr+'/'+W.dem+')<br>'+rd(W.late+' late')+' · '+rd(W.early+' early going'),"ovSetMod('shift_wager')")
     +tile("bl",(G.dem?Math.round(G.arr/G.dem*100):0)+'%','guards arrived ('+G.arr+'/'+G.dem+')<br>'+rd(G.late+' late')+' · '+rd(G.early+' early going'),"ovSetMod('shift_guard')")
-    +tile(supNever?"am":"bl",supV+' visits','HO + IT · '+fmtMins(supMins)+' on ground<br>'+rd(supLate+' late')+' · '+rd(supNever+' stores never visited'),"ovSetMod('people')")
+    +tile(supNever?"am":"bl",supV+' visits','HO + IT · '+fmtMins(supMins)+' on ground<br>'+rd(supLate+' late')+' · '+rd(supNever+' stores never visited'),"ovCoToggle('hoit')")
     +tile("bl",inc.length+' incidents',incSt+' of '+N+' stores ('+(N?Math.round(incSt/N*100):0)+'%)<br>'+(incSt?(inc.length/incSt).toFixed(1):'0')+' per affected store · top: '+esc(topType),"ovSetMod('incidents')")
-    +'</div>';
-  h+=sec('💰 Event budget');
+    +'</div>'
+    +detail('hoit','HO + IT — flags &amp; coverage gaps',
+      (supLateL.length?'<div style="font-size:11px;font-weight:800;color:#8A5A00;margin:2px 0 3px">⚑ LATE / EARLY ('+supLateL.length+')</div>'
+        +supLateL.map(v=>dRow(v.st.split(",")[0]+' · D'+v.dy+' · '+esc(v.n)+' ('+v.who+')'+(v.ai?' · in '+fmt12(v.ai):''),'<span style="color:#B3261E">⚑ '+esc(v.fl)+'</span>')).join(""):'')
+      +(supNeverL.length?'<div style="font-size:11px;font-weight:800;color:#B3261E;margin:8px 0 3px">NEVER VISITED — whole event ('+supNeverL.length+')</div>'
+        +supNeverL.map(n=>dRow(n,'no HO / IT visit')).join(""):'')
+      +'<div style="margin-top:7px"><a style="color:#1f4e8c;cursor:pointer;font-weight:700;font-size:12px" onclick="ovSetMod(\'people\')">Open the full HO &amp; IT report ›</a></div>');
+  h+=sec('💰 Event budget — whole event');
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap">'
     +'<div onclick="ovSetMod(\'budget\')" style="flex:2 1 280px;min-width:240px;border:1px solid #e5e7eb;border-left:3px solid #17457F;border-radius:10px;padding:8px 11px;background:#fff;cursor:pointer"><b style="font-size:15.5px">'+pkr(bSpent)+' spent'+(bAlloc?' of '+pkr(bAlloc)+' · '+bPct+'%':'')+'</b>'+catBar+'</div>'
     +(bOver.length?('<div style="flex:1 1 200px;min-width:180px;border:1px solid #e5e7eb;border-left:3px solid #B3261E;border-radius:10px;padding:8px 11px;background:#fff"><b style="font-size:13px;color:#B3261E">'+bOver.length+' store'+(bOver.length===1?'':'s')+' over budget</b>'
       +bOver.slice(0,5).map(o=>dRow(o.n.split(",")[0],rd('+'+pkr(o.amt)))).join("")+'</div>'):tile("gr","0",'stores over budget',"ovSetMod('budget')"))
     +'</div>';
-  h+=sec('🏦 Net cash + card position · top 5 movers');
+  h+=sec('🏦 Net cash + card position — whole event · top 5 movers');
   h+='<div onclick="ovSetMod(\'cash\')" style="border:1px solid #e5e7eb;border-left:3px solid '+(netAll>=0?'#1B6B4A':'#B3261E')+';border-radius:10px;padding:8px 12px;background:#fff;cursor:pointer;max-width:430px"><b style="font-size:15.5px">'+(netAll>=0?'+':'−')+pkr(Math.abs(netAll))+' net</b><small style="font-size:10.5px;color:#6b7280;display:block">excesses − shortages · all '+N+' stores · final after amendments</small>'
     +movers.map(m=>dRow(m.n,'<span style="color:'+(m.v>=0?'#1B6B4A':'#B3261E')+'">'+(m.v>=0?'+':'−')+pkr(Math.abs(m.v))+'</span>')).join("")+'</div>';
   return h;
@@ -4826,8 +4834,8 @@ function ovHqHome(){
   const daysBar='<div class="ov-daysel" style="margin:0 0 10px">Reviewing: '
     +(CONFIG.EVENTS[0]||{days:[]}).days.map(d=>{ const fut=d.day>OVS.today;
        return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?(OVS.preEvent?" · starts tomorrow":" · today"):"")+'</button>'; }).join("")+'</div>';
-  return daysBar
-    +ovCloseout()
+  return ovCloseout()
+    +daysBar
     +'<div class="ov-duo"><div>'+ovPrepStrip()+'</div><div>'+ovIncidentStrip()+'</div></div>'
     +ovNationalStrip()
     +ovAttention()
