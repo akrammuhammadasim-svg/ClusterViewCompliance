@@ -3774,7 +3774,7 @@ function ovExit(){ location.reload(); }
 
 /* ---- module-first cross-store tables (key fields on one screen) ---- */
 let OVMOD="home", OVDAYPICK=null, OVREGFILTER="", OVCASHDAY=null, OVPICKDAY=2, OVDEPDAY=2, OVSHIFTDAY=2, OVRATEDAY=2, OVBUDDAY=2, OVMATKEY="picks", OVCLEXP={}, OVSHIFTEXP={}, OVRATEEXP={}, OVPREPDAY=null;
-const OV_LENSES=[["overview","Overview"],["prep","Sale prep"],["postlens","Post-sale"],["picks","Pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Guards"],["people","People report"],["dayend","Till & recon"],["deposit","Deposit variance"],["budget","Budget"],["performance","Rating"],["cash","Cash & card"],["cashiers","Cashier variance"],["incidents","Incidents"],["signoffs","Sign-offs"],["approvals","Approvals"]];
+const OV_LENSES=[["overview","Overview"],["prep","Sale prep"],["postlens","Post-sale"],["picks","Pick-ups"],["shift_wager","Daily wagers"],["shift_guard","Guards"],["people","HO & IT"],["dayend","Till & recon"],["deposit","Deposit variance"],["budget","Budget"],["performance","Rating"],["cash","Cash & card"],["cashiers","Cashier variance"],["incidents","Incidents"],["signoffs","Sign-offs"],["approvals","Approvals"]];
 
 function ovTableStores(){ return ovScopeStores().filter(s=> !OVREGFILTER || s.region===OVREGFILTER); }
 function ovDiff(from,to){ return '<span class="ov-old">'+esc(from)+'</span><span class="ov-arw">→</span><span class="ov-new">'+esc(to)+'</span>'; }
@@ -4751,7 +4751,7 @@ function ovDoors(){
       +'<button onclick="ovSetMod(\'cash\')">Cash &amp; card report</button>'
       +'<button onclick="ovSetMod(\'cashiers\')">Cashier variance</button></div>'
     +'<div class="ovh-door"><h4>👥 People</h4>'
-      +'<button onclick="ovSetMod(\'people\')">📊 People report — day &amp; store</button>'
+      +'<button onclick="ovSetMod(\'people\')">🧑‍💻 HO &amp; IT attendance</button>'
       +'<button onclick="ovSetMod(\'shift_wager\')">Daily wagers</button>'
       +'<button onclick="ovSetMod(\'shift_guard\')">Security guards</button>'
       +'<button onclick="ovSetMod(\'performance\')">Staff rating</button>'
@@ -4867,7 +4867,7 @@ function ovLens(){
   else if(OVMOD==="picks") body=ovPickReport();
   else if(OVMOD==="cashiers") body=ovCashierReport();
   else if(OVMOD==="deposit") body=ovDepositReport();
-  else if(OVMOD==="people") body=ovPeopleReport();
+  else if(OVMOD==="people") body=ovSupReport();   /* HO & IT only — wagers/guards live in their own tabs */
   else if(OVMOD==="shift_wager") body=ovShiftReport("wager");
   else if(OVMOD==="shift_guard") body=ovShiftReport("guard");
   else if(OVMOD==="performance") body=ovRatingReport();
@@ -5270,7 +5270,7 @@ function ovSupReport(){
       return tr; }).join("");
     body='<p class="meta" style="margin:0 0 6px">'+T.arr+' arrived · '+T.late+' late · '+T.early+' early going. Flagged rows first. <b>Tap a store to see every person by name.</b></p><div class="ov-scroll"><table class="ov-tbl">'+th+rows+'</table></div>';
   }
-  return '<div class="ov-cashbar" style="margin-top:16px"><div><b>🧑‍💻 HO + IT attendance</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-line btn-sm" onclick="ovSupTimekeepCsv()">⬇ HO+IT timekeeping</button></div></div>'
+  return '<div class="ov-cashbar"><div><b>🧑‍💻 HO + IT attendance</b> · '+(OVREGFILTER||OVREGION||"all regions")+'</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-line btn-sm" onclick="ovSupTimekeepCsv()">⬇ HO+IT timekeeping</button></div></div>'
     +daySel+header+body
     +'<p class="meta" style="margin:8px 2px 0"><b>Attendance</b> = who arrived (IT reps + head-office staff). <b>Punctuality</b> = late arrivals / early going against the required window (15-min grace). Tap a store row to expand its people name-wise; "Open full day ›" jumps to the store.</p>';
 }
