@@ -3374,6 +3374,9 @@ function ovBuild(){
         const SUP={filed:!!supR,visits:0,late:0,early:0,ppl:[]};
         if(supR){ [["IT",supR.it],["HO",supR.ho]].forEach(function(pair){ (pair[1]||[]).forEach(function(v){
           if(!v||(!v.name&&!v.actIn)) return;
+          /* "N/A" / "No One" etc typed as the name AND no time-in = nobody came — skip.
+             A placeholder name WITH a time-in is kept (someone came, badly named). */
+          if(ovSupPlaceholder(v.name)&&!v.actIn) return;
           const fl=personFlags(v.reqIn,v.reqOut,v.actIn,v.actOut);
           SUP.visits++; if(fl.indexOf("Late arrival")>-1)SUP.late++; if(fl.indexOf("Early going")>-1)SUP.early++;
           SUP.ppl.push({who:pair[0],n:v.name||"",ct:v.contact||"",ri:v.reqIn||"",ro:v.reqOut||"",ai:v.actIn||"",ao:v.actOut||"",fl:fl}); }); }); }
@@ -5201,6 +5204,13 @@ function ovPplPersonTable(f){
   return '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">'+head+rows+'</table></div>';
 }
 /* HO + IT — EXACT wagers/guards layout (Name · Role · Scheduled · In · Out · Hours · flags) */
+/* placeholder "names" stores type when nobody came — exact matches only after
+   stripping dots/spaces/case, so real names (Noman, Nabeela…) can never match */
+function ovSupPlaceholder(n){
+  const raw=String(n||"").trim(); if(!raw) return true;
+  const t=raw.toLowerCase().replace(/[.\s]/g,"");
+  return ["n/a","na","notapplicable","nil","none","noone","nobody","x","xx"].indexOf(t)>-1 || /^[-.]+$/.test(raw);
+}
 function ovSupMins(a,b){ if(!a||!b) return null; const p=x=>{const m=String(x).match(/^(\d{1,2}):(\d{2})/); return m?(+m[1])*60+(+m[2]):null;}; const i=p(a),o=p(b); if(i==null||o==null) return null; let d=o-i; if(d<0)d+=1440; return d; }
 function ovPplSupTable(su){
   if(!(su.ppl||[]).length) return '';
@@ -5209,7 +5219,7 @@ function ovPplSupTable(su){
     const late=v.fl.indexOf("Late arrival")>-1, early=v.fl.indexOf("Early going")>-1;
     const m=ovSupMins(v.ai,v.ao);
     return '<tr>'
-      +ovPplCell('<b>'+esc(v.n||"(no name)")+'</b>'+(v.ct?'<br><small style="color:#6b7280">☎ '+esc(v.ct)+'</small>':''),'white-space:normal;min-width:110px')
+      +ovPplCell('<b>'+esc(v.n||"(no name)")+'</b>'+((v.ct&&!ovSupPlaceholder(v.ct))?'<br><small style="color:#6b7280">☎ '+esc(v.ct)+'</small>':''),'white-space:normal;min-width:110px')
       +ovPplCell('<span style="background:#eef2f9;color:#17457F;font-weight:800;font-size:10.5px;padding:2px 7px;border-radius:8px">'+v.who+'</span>')
       +ovPplCell((v.ri||v.ro)?('<small>'+(v.ri?fmt12(v.ri):'—')+'–'+(v.ro?fmt12(v.ro):'—')+'</small>'):'<small style="color:#9aa0a6">—</small>')
       +ovPplCell(v.ai?fmt12(v.ai):'—', late?'color:#B3261E;font-weight:800':'')
