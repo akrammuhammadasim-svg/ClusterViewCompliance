@@ -4725,11 +4725,109 @@ function ovExportAll(){
     ovRatingCsv,ovBudgetCsv,ovCashierCsv,ovSignoffCsv,ovIncidentCsv];
   seq.forEach((f,i)=>setTimeout(()=>{try{f();}catch(e){}},i*450));
 }
+/* ===== EVENT CLOSE-OUT + AT-A-GLANCE (home, from the last sale day onward) ===== */
+let OVCOEXP=null;
+function ovCoToggle(k){ OVCOEXP=(OVCOEXP===k)?null:k; ovRender(); }
+function ovCloseout(){
+  if(OVS.today<5) return "";
+  const stores=ovTableStores(); const N=stores.length;
+  /* ---- ① close-out numbers ---- */
+  let postFiled=0, postPend=[];
+  let depN=0, depAmt=0, depRows=[];
+  let flN=0, flAmt=0, flRows=[];
+  let amendN=0;
+  let signPendDays=0; const signByMgr={};
+  stores.forEach(s=>{
+    const d=OVS.postAll[s.code];
+    if(d) postFiled++; else postPend.push(s.name);
+    /* deposits: day-end filed but no deposit record → that day's cash is still due */
+    let dAmt=0, dDays=[];
+    for(let dy=1;dy<=OVS.today&&dy<=5;dy++){
+      const filed=OVS.filed5[s.code][dy]||[];
+      if(filed.indexOf("dayend")>-1 && filed.indexOf("deposit")===-1){
+        dAmt+=((OVS.cash[s.code]||{})[dy]||{}).sys||0; dDays.push("D"+dy); }
+    }
+    if(dDays.length){ depN++; depAmt+=dAmt; depRows.push({n:s.name,amt:dAmt,days:dDays.join(" ")}); }
+    /* float: post filed but float not deposited back */
+    if(d){ const a=d.answers||{};
+      if(a.FloatDep!=="Yes"){ flN++; const fa=Number(d.floatSent||a.FloatGot||0); flAmt+=fa; flRows.push({n:s.name,amt:fa,w:(a.FloatWhen||"")}); } }
+    amendN+=(((OVS.data[s.code]||{}).amendments)||[]).length;
+    for(let dy=1;dy<=OVS.today&&dy<=5;dy++){
+      if((OVS.filed5[s.code][dy]||[]).length && !((OVS.signed5[s.code]||{})[String(dy)])){
+        signPendDays++; (signByMgr[s.region]=signByMgr[s.region]||[]).push(s.name.split(",")[0]+" D"+dy); }
+    }
+  });
+  depRows.sort((a,b)=>b.amt-a.amt); flRows.sort((a,b)=>b.amt-a.amt);
+  /* ---- ② people & incidents ---- */
+  const shSum=D=>{ let a={dem:0,arr:0,late:0,early:0}; stores.forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=(D[s.code]||{})[dy]; if(f){a.dem+=f.dem||0;a.arr+=f.arr||0;a.late+=f.late||0;a.early+=f.early||0;} } }); return a; };
+  const W=shSum(OVS.wager5), G=shSum(OVS.guard5);
+  let supV=0,supLate=0,supEarly=0,supMins=0,supNever=0;
+  stores.forEach(s=>{ let any=false; for(let dy=1;dy<=5;dy++){ const f=ovSupStat(s.code,dy); supV+=f.arr;supLate+=f.late;supEarly+=f.early;supMins+=f.mins; if(f.arr)any=true; } if(!any)supNever++; });
+  const inc=OVS.incidents||[]; const incStores={}; const incTypes={};
+  inc.forEach(i=>{ incStores[i.code]=1; incTypes[i.lab||i.type]=(incTypes[i.lab||i.type]||0)+1; });
+  const incSt=Object.keys(incStores).length;
+  const topType=Object.keys(incTypes).sort((a,b)=>incTypes[b]-incTypes[a])[0]||"—";
+  /* ---- ③ budget ---- */
+  let bAlloc=0,bSpent=0; const bCats={}; const bOver=[];
+  stores.forEach(s=>{ let last=null; for(let dy=5;dy>=1;dy--){ const f=(OVS.budget5[s.code]||{})[dy]; if(f&&(f.toDate||f.alloc)){ last=f; break; } }
+    if(last){ bAlloc+=last.alloc||0; bSpent+=last.toDate||0; if(last.alloc&&last.remaining!=null&&last.remaining<0) bOver.push({n:s.name,amt:-last.remaining}); }
+    const cc=OVS.budCats5[s.code]||{}; let snap=null; for(let dy=5;dy>=1;dy--){ if(cc[dy]){snap=cc[dy];break;} }
+    if(snap) Object.keys(snap).forEach(k=>{ bCats[k]=(bCats[k]||0)+(Number(snap[k])||0); });
+  });
+  bOver.sort((a,b)=>b.amt-a.amt);
+  const bPct=bAlloc?Math.round(bSpent/bAlloc*100):null;
+  const CATL={food:["Food","#BA7517"],janitorial:["Janitorial","#17457F"],water:["Water","#1B9AAA"],tentage:["Tentage & chairs","#7A4FBF"],valet:["Valet","#5B7C99"]};
+  const catTot=Object.keys(bCats).reduce((a,k)=>a+bCats[k],0);
+  const catBar=catTot?('<div style="height:8px;border-radius:4px;background:#eef0f3;margin:6px 0 4px;overflow:hidden;display:flex">'
+    +Object.keys(bCats).map(k=>{const c=(CATL[k]||[k,"#9aa"]);return '<i style="display:block;height:8px;width:'+(bCats[k]/Math.max(bSpent,catTot)*100)+'%;background:'+c[1]+'"></i>';}).join("")+'</div>'
+    +'<div style="font-size:10px;color:#6b7280;display:flex;gap:8px;flex-wrap:wrap">'
+    +Object.keys(bCats).map(k=>{const c=(CATL[k]||[k,"#9aa"]);return '<span><i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:'+c[1]+';margin-right:3px;vertical-align:middle"></i>'+esc(c[0])+' '+(catTot?Math.round(bCats[k]/catTot*100):0)+'%</span>';}).join("")
+    +(bAlloc>bSpent?'<span>· unspent '+Math.round((bAlloc-bSpent)/bAlloc*100)+'%</span>':'')+'</div>'):'';
+  /* ---- ④ net position + top movers ---- */
+  let netAll=0; const movers=stores.map(s=>{ let n=0; for(let dy=1;dy<=5;dy++){ const x=(OVS.netSplit5[s.code]||{})[dy]; if(x)n+=(x.cash||0)+(x.card||0); } netAll+=n; return {n:s.name,v:n}; })
+    .filter(m=>m.v!==0).sort((a,b)=>Math.abs(b.v)-Math.abs(a.v)).slice(0,5);
+  /* ---- render ---- */
+  const tile=(cls,big,small,click)=>'<div onclick="'+(click||'')+'" style="flex:1 1 128px;min-width:118px;border:1px solid #e5e7eb;border-left:3px solid '+(cls==="rd"?"#B3261E":cls==="am"?"#d97706":cls==="gr"?"#1B6B4A":"#17457F")+';border-radius:10px;padding:8px 11px;background:#fff'+(click?';cursor:pointer':'')+'"><b style="font-size:15.5px;display:block">'+big+'</b><small style="font-size:10.5px;color:#6b7280;line-height:1.4;display:block;margin-top:2px">'+small+'</small></div>';
+  const sec=t=>'<div class="ovh-sechead">'+t+'</div>';
+  const dRow=(n,r)=> '<div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;border-bottom:1px dotted #e5e7eb"><span>'+esc(n)+'</span><b>'+r+'</b></div>';
+  const detail=(id,title,rowsHtml)=> OVCOEXP===id?'<div class="card" style="margin:8px 0 0"><div class="card-body"><b style="font-size:12.5px">'+title+'</b><div style="margin-top:5px">'+(rowsHtml||'<span class="meta">None — all clear.</span>')+'</div></div></div>':'';
+  const rd=v=>'<span style="color:#B3261E;font-weight:700">'+v+'</span>';
+  let h=sec('🌇 Event close-out — tap a card for store detail');
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +tile(postFiled<N?"rd":"gr",postFiled+' / '+N,'post-sale filed · due Tue 6 PM',"ovCoToggle('post')")
+    +tile(depN?"am":"gr",depN+' · '+pkr(depAmt),'deposits pending (Monday)',"ovCoToggle('dep')")
+    +tile(flN?"am":"gr",flN+' · '+pkr(flAmt),'float returns pending',"ovCoToggle('float')")
+    +tile(amendN?"rd":"gr",String(amendN),'amendments pending approval',"ovSetMod('approvals')")
+    +tile(signPendDays?"am":"gr",signPendDays+' days','sign-off pending',"ovCoToggle('sign')")
+    +'</div>'
+    +detail('post','Post-sale NOT filed — '+postPend.length+' store'+(postPend.length===1?'':'s'),postPend.map(n=>dRow(n,'pending')).join(""))
+    +detail('dep','Deposits pending — banked Monday',depRows.map(r=>dRow(r.n+' · '+r.days,pkr(r.amt))).join(""))
+    +detail('float','Float return pending',flRows.map(r=>dRow(r.n+(r.w?' · promised '+esc(r.w):''),r.amt?pkr(r.amt):'—')).join(""))
+    +detail('sign','Sign-offs pending — by cluster manager',Object.keys(signByMgr).map(m=>dRow(m,signByMgr[m].join(" · "))).join(""));
+  h+=sec('📊 Event at a glance');
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +tile("bl",(W.dem?Math.round(W.arr/W.dem*100):0)+'%','wagers arrived ('+W.arr+'/'+W.dem+')<br>'+rd(W.late+' late')+' · '+rd(W.early+' early going'),"ovSetMod('shift_wager')")
+    +tile("bl",(G.dem?Math.round(G.arr/G.dem*100):0)+'%','guards arrived ('+G.arr+'/'+G.dem+')<br>'+rd(G.late+' late')+' · '+rd(G.early+' early going'),"ovSetMod('shift_guard')")
+    +tile(supNever?"am":"bl",supV+' visits','HO + IT · '+fmtMins(supMins)+' on ground<br>'+rd(supLate+' late')+' · '+rd(supNever+' stores never visited'),"ovSetMod('people')")
+    +tile("bl",inc.length+' incidents',incSt+' of '+N+' stores ('+(N?Math.round(incSt/N*100):0)+'%)<br>'+(incSt?(inc.length/incSt).toFixed(1):'0')+' per affected store · top: '+esc(topType),"ovSetMod('incidents')")
+    +'</div>';
+  h+=sec('💰 Event budget');
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +'<div onclick="ovSetMod(\'budget\')" style="flex:2 1 280px;min-width:240px;border:1px solid #e5e7eb;border-left:3px solid #17457F;border-radius:10px;padding:8px 11px;background:#fff;cursor:pointer"><b style="font-size:15.5px">'+pkr(bSpent)+' spent'+(bAlloc?' of '+pkr(bAlloc)+' · '+bPct+'%':'')+'</b>'+catBar+'</div>'
+    +(bOver.length?('<div style="flex:1 1 200px;min-width:180px;border:1px solid #e5e7eb;border-left:3px solid #B3261E;border-radius:10px;padding:8px 11px;background:#fff"><b style="font-size:13px;color:#B3261E">'+bOver.length+' store'+(bOver.length===1?'':'s')+' over budget</b>'
+      +bOver.slice(0,5).map(o=>dRow(o.n.split(",")[0],rd('+'+pkr(o.amt)))).join("")+'</div>'):tile("gr","0",'stores over budget',"ovSetMod('budget')"))
+    +'</div>';
+  h+=sec('🏦 Net cash + card position · top 5 movers');
+  h+='<div onclick="ovSetMod(\'cash\')" style="border:1px solid #e5e7eb;border-left:3px solid '+(netAll>=0?'#1B6B4A':'#B3261E')+';border-radius:10px;padding:8px 12px;background:#fff;cursor:pointer;max-width:430px"><b style="font-size:15.5px">'+(netAll>=0?'+':'−')+pkr(Math.abs(netAll))+' net</b><small style="font-size:10.5px;color:#6b7280;display:block">excesses − shortages · all '+N+' stores · final after amendments</small>'
+    +movers.map(m=>dRow(m.n,'<span style="color:'+(m.v>=0?'#1B6B4A':'#B3261E')+'">'+(m.v>=0?'+':'−')+pkr(Math.abs(m.v))+'</span>')).join("")+'</div>';
+  return h;
+}
 function ovHqHome(){
   const daysBar='<div class="ov-daysel" style="margin:0 0 10px">Reviewing: '
     +(CONFIG.EVENTS[0]||{days:[]}).days.map(d=>{ const fut=d.day>OVS.today;
        return '<button class="ov-daybtn'+(d.day===OVS.day?" on":"")+'"'+(fut?' disabled style="opacity:.4;cursor:not-allowed"':' onclick="ovSetHomeDay('+d.day+')"')+'>Day '+d.day+(d.day===OVS.today?(OVS.preEvent?" · starts tomorrow":" · today"):"")+'</button>'; }).join("")+'</div>';
   return daysBar
+    +ovCloseout()
     +'<div class="ov-duo"><div>'+ovPrepStrip()+'</div><div>'+ovIncidentStrip()+'</div></div>'
     +ovNationalStrip()
     +ovAttention()
