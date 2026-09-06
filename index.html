@@ -5209,7 +5209,7 @@ function ovPplPersonTable(f){
 function ovSupPlaceholder(n){
   const raw=String(n||"").trim(); if(!raw) return true;
   const t=raw.toLowerCase().replace(/[.\s]/g,"");
-  return ["n/a","na","notapplicable","nil","none","noone","nobody","x","xx"].indexOf(t)>-1 || /^[-.]+$/.test(raw);
+  return ["n/a","na","notapplicable","nil","none","noone","nobody","x","xx"].indexOf(t)>-1 || /^[-.]+$/.test(raw) || /^[0-9]+$/.test(t); /* a pure-digit "name" (0, 00…) is never a person */
 }
 function ovSupMins(a,b){ if(!a||!b) return null; const p=x=>{const m=String(x).match(/^(\d{1,2}):(\d{2})/); return m?(+m[1])*60+(+m[2]):null;}; const i=p(a),o=p(b); if(i==null||o==null) return null; let d=o-i; if(d<0)d+=1440; return d; }
 function ovPplSupTable(su){
