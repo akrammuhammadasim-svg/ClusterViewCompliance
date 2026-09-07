@@ -4178,8 +4178,24 @@ function ovPrepFullCsv(){
 const POST_GROUPS_OV=[["sale","Sale staff"],["guard","Security guards"],["jan","Janitorial staff"]];
 let OVPOSTEXP={};
 function ovPostToggle(code){ OVPOSTEXP[code]=!OVPOSTEXP[code]; ovRender(); }
-function postFlags(d){
+/* budget remainder for a store = allocated − spent-to-date from OVERSIGHT'S OWN
+   copy of the filed budget records (latest day) — never the store's claim */
+function ovBudRem(code){
+  let last=null; for(let dy=5;dy>=1;dy--){ const f=(OVS.budget5[code]||{})[dy]; if(f&&(f.alloc||f.toDate)){ last=f; break; } }
+  if(!last) return {found:false};
+  return {found:true,alloc:last.alloc||0,spent:last.toDate||0,rem:last.alloc?(last.alloc-(last.toDate||0)):null};
+}
+function postFlags(d,code){
   const a=(d&&d.answers)||{}; const f=[];
+  /* B2 — budget remainder return, checked against the RECORDS */
+  if(code){ const br=ovBudRem(code);
+    if(br.found&&br.rem!=null&&br.rem>0){
+      if(a.BudDep!=="Yes") f.push("BUDGET REMAINDER PKR "+fmt(br.rem)+" NOT RETURNED — store says: "+(a.BudWhen||"no date given"));
+      else{
+        const amt=Number(a.BudAmt||0);
+        if(amt!==br.rem) f.push("Budget remainder: returned PKR "+fmt(amt)+" but records show PKR "+fmt(br.rem)+" — "+(a.BudWhy?("reason: "+a.BudWhy):"PKR "+fmt(Math.abs(br.rem-amt))+" UNEXPLAINED"));
+      }
+    } }
   const pend=Number(d&&d.pendingAmount||0);
   if(pend>0) f.push("PKR "+fmt(pend)+" recovery STILL PENDING from staff");
   if(a.Sign==="No") f.push("Sale signages not corrected");
@@ -4225,6 +4241,14 @@ function postAnswerRows(d){
   R.push(["D · Racks","Empty unstitched racks",
     a.Rack==="Still on the floor"?("Still on floor · "+(a.RackCount||"?")+" · cluster approved: "+(a.RackApp||"—")):(a.Rack||"—"),
     a.Rack==="Still on the floor"&&a.RackApp!=="Yes"]);
+  /* B2 · budget remainder — computed from records when the store code is known */
+  { const br=arguments.length>1&&arguments[1]?ovBudRem(arguments[1]):{found:false};
+    if(br.found&&br.rem!=null&&br.rem>0){
+      R.push(["B2 · Budget remainder","Remainder to return (records: "+fmt(br.alloc)+" − "+fmt(br.spent)+")","PKR "+fmt(br.rem),false]);
+      R.push(["B2 · Budget remainder","Deposited back",
+        a.BudDep==="Yes"?("Yes · PKR "+fmt(Number(a.BudAmt||0))+" · "+(a.BudBank||"?")+" · slip "+(a.BudSlip||"?")+" · "+(a.BudE1||"?")+(a.BudE2?" + "+a.BudE2:"")+(a.BudWhy?" · "+a.BudWhy:"")):
+        (a.BudDep==="Not yet"?("NOT YET · "+(a.BudWhen||"no date")):(a.BudDep||"—")),a.BudDep!=="Yes"]);
+    } else if(a.BudDep){ R.push(["B2 · Budget remainder","Deposited back",a.BudDep+(a.BudAmt?" · PKR "+fmt(Number(a.BudAmt)):""),false]); } }
   const fnT=Number(d&&d.fnTillTotal||0), fnP=Number(d&&d.fnTillPending||0);
   if(fnT>0){
     R.push(["A2 · Fake notes","Till-caught (tagged to staff)","PKR "+fmt(fnT),false]);
@@ -4246,9 +4270,9 @@ function postAnswerRows(d){
   if(a.Notes) R.push(["Notes","Store's note",a.Notes,false]);
   return R;
 }
-function postDetailHTML(d){
+function postDetailHTML(d,code){
   if(!d) return ""; let cur="",h="";
-  postAnswerRows(d).forEach(r=>{
+  postAnswerRows(d,code).forEach(r=>{
     if(r[0]!==cur){ cur=r[0]; h+='<div style="font-weight:800;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:#4b5563;margin:9px 0 3px">'+esc(cur)+'</div>'; }
     h+='<div style="display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:2.5px 0;border-bottom:1px dotted #e5e7eb"><span style="color:#555">'+esc(r[1])+'</span><b style="text-align:right;color:'+(r[3]?'#B3261E':'#1b1f27')+'">'+esc(r[2])+'</b></div>';
   });
@@ -4260,27 +4284,57 @@ function ovPostCard(code){
   let body;
   if(!d) body='<div class="ov-blk">No post-sale confirmation filed yet.</div>';
   else{
-    const fl=postFlags(d);
+    const fl=postFlags(d,code);
     body=(d.filedLate?'<div class="ov-echip" style="margin-bottom:6px">⏰ Filed late</div>':'')
       +'<div class="ov-l"><b>Recovered PKR '+fmt(Number((d.answers||{}).Recovered||0))+'</b> of PKR '+fmt(Number(d.recoverable||0))+(Number(d.pendingAmount||0)>0?' · <b style="color:#B3261E">PKR '+fmt(Number(d.pendingAmount))+' pending</b>':' · all clear ✓')+'</div>'
       +(fl.length?'<div class="ov-exc" style="margin-top:6px">'+fl.map(x=>'<span class="ov-echip">⚑ '+esc(x)+'</span>').join("")+'</div>'
                  :'<div class="ov-l" style="color:#1B6B4A;font-weight:600">All wind-down items in order.</div>')
       +'<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;color:#1f4e8c;font-size:13px">📋 Show the FULL filled confirmation — every answer</summary>'
-      +'<div style="padding:6px 2px 0">'+postDetailHTML(d)+'</div></details>'
+      +'<div style="padding:6px 2px 0">'+postDetailHTML(d,code)+'</div></details>'
       +(d.prepStatus==="approved"?'<div class="ov-l" style="color:#1B6B4A;font-weight:700;margin-top:6px">✓ Approved by '+esc(d.prepBy||"")+' · '+esc(d.prepAt||"")+'</div>':"")
+      /* REOPEN an approved POST-SALE — only while the store can still resubmit
+         (until last sale day +3, i.e. Wednesday). Sends it back with remarks. */
+      +((can&&d.prepStatus==="approved"&&ovPostReopenOpen())?
+        '<div style="margin-top:8px"><span class="lab req">Reopen — remarks to the store (what must be fixed)</span>'
+        +'<input type="text" id="postRem-'+code.replace(/[^A-Za-z0-9]/g,"_")+'" maxlength="300" placeholder="e.g. B2 remainder slip wrong — correct and resubmit" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d5d9e0;border-radius:8px;font:inherit;margin-top:3px">'
+        +'<div class="apv-acts"><button class="apv-no" onclick="ovPostReview(\''+code+'\',\'sendback\')">↩ Reopen — send back to store</button></div>'
+        +'<p class="meta" style="margin:4px 0 0">Reopening possible until Wednesday (store resubmit window). The approval trail stays in the record.</p></div>':"")
       +(d.prepStatus==="sentback"?'<div class="ov-l" style="color:#B3261E;font-weight:700;margin-top:6px">↩ Sent back by '+esc(d.prepBy||"")+': '+esc(d.prepRemarks||"")+'</div>':"")
       +((can&&d.prepStatus!=="approved")?
         '<div style="margin-top:9px"><span class="lab">Remarks to the store <small style="color:#8A5A00">(required to send back)</small></span>'
         +'<input type="text" id="postRem-'+code.replace(/[^A-Za-z0-9]/g,"_")+'" maxlength="300" placeholder="e.g. Recover the pending 500 from Waqar before Friday and resubmit" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d5d9e0;border-radius:8px;font:inherit;margin-top:3px">'
+        +(ovPostBudGate(code,d)?'<div style="margin-top:7px"><span class="lab req">Budget remainder not confirmed returned — closure remark required to approve</span>'
+          +'<select id="postBudSel-'+code.replace(/[^A-Za-z0-9]/g,"_")+'" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e8cf9a;border-radius:8px;font:inherit;margin-top:3px;background:#FFFBF2">'
+          +'<option value="">Select before approving</option><option>Remainder verified returned — slip checked</option><option>Pending Monday banking — follow up</option><option>Difference explained &amp; accepted</option></select></div>':'')
         +'<div class="apv-acts"><button class="apv-no" onclick="ovPostReview(\''+code+'\',\'sendback\')">↩ Send back</button>'
         +'<button class="apv-ok" onclick="ovPostReview(\''+code+'\',\'approve\')">✓ Wind-down approved</button></div></div>':"");
   }
   return '<div class="card"><div class="card-head"><h3>🌇 Post-sale wind-down</h3>'+prepStatusChip(d)+'</div><div class="card-body">'+body+'</div></div>';
 }
+/* reopen window = the store's own resubmit window: until last sale day +3 (Wednesday) */
+function ovPostReopenOpen(){
+  const ev=CONFIG.EVENTS.find(e=>e.id===OVS.event)||CONFIG.EVENTS[0]||{days:[]};
+  const days=ev.days||[]; if(!days.length||!OVS.businessDate) return false;
+  const d2=new Date(days[days.length-1].date+"T12:00:00"); d2.setDate(d2.getDate()+3);
+  const q=x=>String(x).length<2?"0"+x:String(x);
+  return OVS.businessDate<=(d2.getFullYear()+"-"+q(d2.getMonth()+1)+"-"+q(d2.getDate()));
+}
+/* approve gate: budget remainder unreturned or unexplained mismatch → closure remark required */
+function ovPostBudGate(code,d){
+  const br=ovBudRem(code); if(!(br.found&&br.rem!=null&&br.rem>0)) return false;
+  const a=(d&&d.answers)||{};
+  if(a.BudDep!=="Yes") return true;
+  return Number(a.BudAmt||0)!==br.rem&&!a.BudWhy;
+}
 async function ovPostReview(code,decision){
   const el=document.getElementById("postRem-"+code.replace(/[^A-Za-z0-9]/g,"_"));
-  const remarks=el?el.value.trim():"";
+  let remarks=el?el.value.trim():"";
   if(decision==="sendback"&&!remarks){ toast("Add remarks — say what the store must fix."); if(el)el.focus(); return; }
+  if(decision==="approve"&&ovPostBudGate(code,OVS.postAll[code])){
+    const sel=document.getElementById("postBudSel-"+code.replace(/[^A-Za-z0-9]/g,"_"));
+    if(!sel||!sel.value){ toast("Budget remainder not confirmed — pick the closure remark before approving."); if(sel)sel.focus(); return; }
+    remarks=(remarks?remarks+" · ":"")+"Budget remainder: "+sel.value;
+  }
   try{
     const res=await fetch(CONFIG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
       body:JSON.stringify({action:"post-review",code:ACCESS_CODE,store:code,event:OVS.event,decision:decision,remarks:remarks})});
@@ -4310,7 +4364,7 @@ function ovPostReport(){
   const stores=ovTableStores();
   const list=stores.map(s=>({s:s,d:OVS.postAll[s.code]}))
     .sort((a,b)=>{ const r=x=>!x.d?0:x.d.prepStatus==="sentback"?1:Number(x.d.pendingAmount||0)>0?2:x.d.prepStatus==="submitted"?3:4; return r(a)-r(b)||a.s.name.localeCompare(b.s.name); });
-  const trs=list.map(o=>{ const fl=o.d?postFlags(o.d):[];
+  const trs=list.map(o=>{ const fl=o.d?postFlags(o.d,o.s.code):[];
     const open=OVPOSTEXP[o.s.code];
     let tr='<tr onclick="ovPostToggle(\''+o.s.code+'\')"><td class="stk">'+esc(o.s.name)+' <span class="ov-caret">'+(open?"▾":"▸")+'</span></td><td class="muted">'+esc(o.s.region)+'</td>'
       +'<td>'+prepStatusChip(o.d)+(o.d&&o.d.filedLate?' <span class="ov-echip">⏰</span>':'')+'</td>'
@@ -4318,7 +4372,7 @@ function ovPostReport(){
       +'<td style="text-align:left">'+(fl.length?fl.slice(0,3).map(x=>'⚑ '+esc(x)).join("<br>")+(fl.length>3?"<br>+"+(fl.length-3)+" more…":""):(o.d?'<span style="color:#1B6B4A">all in order</span>':'—'))+'</td>'
       +'<td class="muted">'+(o.d&&o.d.prepBy?esc(o.d.prepBy):'—')+'</td></tr>';
     if(open) tr+='<tr class="ov-sub"><td colspan="6" style="background:#f7f8fa;padding:10px 14px;text-align:left">'
-      +(o.d?postDetailHTML(o.d):'<span class="meta">Nothing filed yet.</span>')
+      +(o.d?postDetailHTML(o.d,o.s.code):'<span class="meta">Nothing filed yet.</span>')
       +'<div style="margin-top:8px"><a style="color:#1f4e8c;cursor:pointer;font-weight:600" onclick="event.stopPropagation();ovOpen(\''+o.s.code+'\')">Open the store — review &amp; approve / send back ›</a></div></td></tr>';
     return tr; }).join("");
   return '<div class="ov-cashbar"><div><b>🌇 Post-sale wind-down</b> · '+(OVREGFILTER||OVREGION||"all stores")+'</div><div style="display:flex;gap:6px"><button class="btn btn-line btn-sm" onclick="ovPostCsv()">⬇ Summary CSV</button><button class="btn btn-line btn-sm" onclick="ovPostFullCsv()">⬇ Full answers CSV</button></div></div>'
@@ -4327,7 +4381,7 @@ function ovPostReport(){
 }
 function ovPostCsv(){
   const rows=[["Store","Cluster manager","Status","Filed late","Recoverable PKR","Recovered PKR","Pending PKR","Flags","Detail","Reviewed by","Review remarks"]];
-  ovTableStores().forEach(s=>{ const d=OVS.postAll[s.code]; const fl=d?postFlags(d):[]; const a=(d&&d.answers)||{};
+  ovTableStores().forEach(s=>{ const d=OVS.postAll[s.code]; const fl=d?postFlags(d,s.code):[]; const a=(d&&d.answers)||{};
     rows.push([s.name,s.region,d?(d.prepStatus||"submitted"):"NOT FILED",d&&d.filedLate?"YES":"",d?Number(d.recoverable||0):"",d?Number(a.Recovered||0):"",d?Number(d.pendingAmount||0):"",fl.length,fl.join(" | "),d?(d.prepBy||""):"",d?(d.prepRemarks||""):""]); });
   downloadCsv("post-sale-winddown.csv",rows);
 }
@@ -4735,6 +4789,7 @@ function ovCloseout(){
   let postFiled=0, postPend=[];
   let depN=0, depAmt=0, depRows=[];
   let flN=0, flAmt=0, flRows=[];
+  let brN=0, brAmt=0, brRows=[];
   let amendN=0;
   let signPendDays=0; const signByMgr={};
   stores.forEach(s=>{
@@ -4751,13 +4806,17 @@ function ovCloseout(){
     /* float: post filed but float not deposited back */
     if(d){ const a=d.answers||{};
       if(a.FloatDep!=="Yes"){ flN++; const fa=Number(d.floatSent||a.FloatGot||0); flAmt+=fa; flRows.push({n:s.name,amt:fa,w:(a.FloatWhen||"")}); } }
+    /* budget remainder not yet returned (records-based; unfiled post = not returned) */
+    { const br=ovBudRem(s.code);
+      if(br.found&&br.rem!=null&&br.rem>0){ const a=(d&&d.answers)||{};
+        if(a.BudDep!=="Yes"){ brN++; brAmt+=br.rem; brRows.push({n:s.name,amt:br.rem,w:(a.BudWhen||(d?"no date":"post-sale not filed"))}); } } }
     amendN+=(((OVS.data[s.code]||{}).amendments)||[]).length;
     for(let dy=1;dy<=OVS.today&&dy<=5;dy++){
       if((OVS.filed5[s.code][dy]||[]).length && !((OVS.signed5[s.code]||{})[String(dy)])){
         signPendDays++; (signByMgr[s.region]=signByMgr[s.region]||[]).push(s.name.split(",")[0]+" D"+dy); }
     }
   });
-  depRows.sort((a,b)=>b.amt-a.amt); flRows.sort((a,b)=>b.amt-a.amt);
+  depRows.sort((a,b)=>b.amt-a.amt); flRows.sort((a,b)=>b.amt-a.amt); brRows.sort((a,b)=>b.amt-a.amt);
   /* ---- ② people & incidents ---- */
   const shSum=D=>{ let a={dem:0,arr:0,late:0,early:0}; stores.forEach(s=>{ for(let dy=1;dy<=5;dy++){ const f=(D[s.code]||{})[dy]; if(f){a.dem+=f.dem||0;a.arr+=f.arr||0;a.late+=f.late||0;a.early+=f.early||0;} } }); return a; };
   const W=shSum(OVS.wager5), G=shSum(OVS.guard5);
@@ -4799,12 +4858,14 @@ function ovCloseout(){
     +tile(postFiled<N?"rd":"gr",postFiled+' / '+N,'post-sale filed · due Tue 6 PM',"ovCoToggle('post')")
     +tile(depN?"am":"gr",depN+' · '+pkr(depAmt),'deposits pending (Monday)',"ovCoToggle('dep')")
     +tile(flN?"am":"gr",flN+' · '+pkr(flAmt),'float returns pending',"ovCoToggle('float')")
+    +tile(brN?"am":"gr",brN+' · '+pkr(brAmt),'budget remainder not returned',"ovCoToggle('budret')")
     +tile(amendN?"rd":"gr",String(amendN),'amendments pending approval',"ovSetMod('approvals')")
     +tile(signPendDays?"am":"gr",String(signPendDays),'sign-offs pending (one per store per day)',"ovCoToggle('sign')")
     +'</div>'
     +detail('post','Post-sale NOT filed — '+postPend.length+' store'+(postPend.length===1?'':'s'),postPend.map(n=>dRow(n,'pending')).join(""))
     +detail('dep','Deposits pending — banked Monday',depRows.map(r=>dRow(r.n+' · '+r.days,pkr(r.amt))).join(""))
     +detail('float','Float return pending',flRows.map(r=>dRow(r.n+(r.w?' · promised '+esc(r.w):''),r.amt?pkr(r.amt):'—')).join(""))
+    +detail('budret','Budget remainder not deposited back',brRows.map(r=>dRow(r.n+' · '+esc(r.w),pkr(r.amt))).join(""))
     +detail('sign','Sign-offs pending — by cluster manager',Object.keys(signByMgr).map(m=>dRow(m,signByMgr[m].join(" · "))).join(""));
   h+=sec('📊 Event at a glance — whole event');
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap">'
